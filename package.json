@@ -1,0 +1,66 @@
+{
+  "name": "languagebridge",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --mode development",
+    "build": "node scripts/check-templates.mjs && vite build",
+    "preview": "vite preview",
+    "start": "node scripts/server.mjs",
+    "build:exe": "vite build && node scripts/build-exe.mjs",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:e2e:open": "cypress open",
+    "test:e2e:run": "cypress run",
+    "test:integration": "vitest run tests/integration",
+    "lint": "eslint . --ext .vue,.ts,.js --cache",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "type-check": "vue-tsc --noEmit",
+    "check": "node scripts/check-templates.mjs"
+  },
+  "dependencies": {
+    "3d-force-graph": "^1.79.0",
+    "mammoth": "^1.12.0",
+    "pdfjs-dist": "^6.1.200",
+    "pinia": "^2.1.7",
+    "remixicon": "^4.6.0",
+    "ts-fsrs": "^5.2.3",
+    "three": "^0.182.0",
+    "vue": "^3.4.21",
+    "vue-router": "^4.2.5",
+    "vue-tsc": "^2.0.29"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/test-utils": "^2.4.2",
+    "cypress": "^13.6.4",
+    "eslint": "^8.57.0",
+    "eslint-plugin-vue": "^9.23.0",
+    "idb": "^7.1.1",
+    "jsdom": "^24.0.0",
+    "pkg": "^5.8.1",
+    "prettier": "^3.2.5",
+    "sass": "^1.75.0",
+    "typescript": "^5.4.3",
+    "vite": "^5.2.11",
+    "vitest": "^1.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.4",
+  "pnpm": {
+    "neverBuiltDependencies": [
+      "@anthropic-ai/sdk",
+      "better-sqlite3",
+      "cypress",
+      "dart-sass",
+      "esbuild"
+    ]
+  }
+}

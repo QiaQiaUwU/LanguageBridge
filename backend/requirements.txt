@@ -1,0 +1,14 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+python-multipart>=0.0.9
+# ↑ 这一条容易漏：FastAPI 的 UploadFile/File(...)（音频上传接口 /api/articles/{id}/audio
+# 用到）运行时依赖 python-multipart，不装的话不是装不上、是能启动但一调那个接口就报错
+# "Form data requires 'python-multipart' to be installed"。参照 MyLibrary 自己的
+# requirements.txt 也单独列了这一条，是同一个原因，不是我瞎猜的。
+
+# 音频强制对齐（/api/articles/{id}/align）用到的两个东西不在这里、也不能用 pip 装：
+#   - Montreal Forced Aligner (MFA)：conda/mamba 装，`conda install -c conda-forge montreal-forced-aligner`
+#   - ffmpeg：系统可执行文件，装好后要能在 PATH 里直接调用
+# 具体步骤和为什么选 MFA 见 README.md「强制对齐」那一节。这两个装不上，其它接口
+# （文章/分组/待办 CRUD、音频上传下载）完全不受影响，只有 /align 这一个接口会报错。

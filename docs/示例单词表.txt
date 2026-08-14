@@ -1,0 +1,9 @@
+# 支持的格式示例（可混用，# 开头为注释）
+accommodation;住处，办公处
+house;n. 住房，别墅
+room for rent;出租
+to let；出租
+first name	名字
+undergraduate n. 本科生
+abandon /əˈbændən/ v. 抛弃，放弃
+suite

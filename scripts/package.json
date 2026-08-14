@@ -1,0 +1,16 @@
+{
+  "name": "languagebridge-standalone",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server-standalone.cjs",
+  "pkg": {
+    "assets": [
+      "dist/**/*"
+    ],
+    "scripts": [
+      "dataStore.cjs",
+      "dataApi.cjs",
+      "importVocabverse.cjs"
+    ]
+  }
+}
