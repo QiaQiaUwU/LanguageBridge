@@ -1,7 +1,7 @@
 <template>
   <div class="typing-card">
     <div class="meta-line top">
-      <span v-if="word.phonetic" class="phonetic">/ {{ word.phonetic.replace(/^\/|\/$/g, '') }} /</span>
+      <span v-if="word.phonetic" class="phonetic" :class="{ 'ph-hide': !revealRest }">/ {{ word.phonetic.replace(/^\/|\/$/g, '') }} /</span>
     </div>
 
     <p v-if="sentenceIdx >= 0" class="sentence-tip">
@@ -16,11 +16,53 @@
       </template>
     </div>
 
+    <!-- 照 TypeWord.vue 单词下面那一排操作按钮：已掌握 / 笔记 / 收藏 / 跳过，
+         外加原来就有的发音。上游那四个我们一个都没有，只能靠翻页面绕过去。 -->
     <div class="icon-row">
-      <button class="speak-btn" title="播放发音（Ctrl+P）" @click="speak">
+      <button class="speak-btn" :title="`播放发音（${settings.shortcutKeyMap.replaySound}）`" @click="speak">
         <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
       </button>
+      <button
+        class="speak-btn"
+        :class="{ on: masteredNow }"
+        :title="(masteredNow ? '取消已掌握' : '标记已掌握') + `（${settings.shortcutKeyMap.toggleMastered}）`"
+        @click="onToggleMastered"
+      >
+        <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.2 14.2-4-4 1.4-1.4 2.6 2.6 5.6-5.6L18 9.2z"/></svg>
+      </button>
+      <button class="speak-btn" :class="{ on: noteEditing || !!word.userNote }" :title="`笔记（${settings.shortcutKeyMap.editNote}）`" @click="toggleNote">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M4 4h11l5 5v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm3 5v2h8V9zm0 4v2h8v-2zm0 4v2h5v-2z"/></svg>
+      </button>
+      <button class="speak-btn" :class="{ on: collectOpen }" :title="`收藏进词表（${settings.shortcutKeyMap.collectWord}）`" @click="collectOpen = !collectOpen">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="m12 17.3-6.2 3.7 1.6-7L2 9.2l7.1-.6L12 2l2.9 6.6 7.1.6-5.4 4.8 1.6 7z"/></svg>
+      </button>
+      <button class="speak-btn" :title="`跳过（${settings.shortcutKeyMap.skipWord}）`" @click="emit('skip')">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M6 5l8 7-8 7zm10 0h2v14h-2z"/></svg>
+      </button>
     </div>
+
+    <div v-if="collectOpen" class="collect-box">
+      <p v-if="!wordStore.groups.length" class="cb-empty">还没有词表</p>
+      <button
+        v-for="g in wordStore.groups"
+        :key="g.id"
+        class="cb-item"
+        :class="{ in: g.wordIds.includes(word.id) }"
+        @click="collectTo(g.id)"
+      >{{ g.name }}<span v-if="g.wordIds.includes(word.id)" class="cb-in">已在里面</span></button>
+    </div>
+
+    <div v-if="noteEditing" class="note-box">
+      <textarea v-model="noteDraft" class="nb-input" rows="3" placeholder="给这个词记点什么"></textarea>
+      <div class="nb-acts">
+        <button v-if="word.userNote" class="nb-btn" @click="deleteNote">删除</button>
+        <button class="nb-btn" @click="cancelNote">取消</button>
+        <button class="nb-btn primary" @click="saveNote">保存</button>
+      </div>
+    </div>
+    <p v-else-if="word.userNote" class="note-view">{{ word.userNote }}</p>
+
+    <WordLookupPopover />
 
     <div class="meaning" :style="{ fontSize: settings.fontSize.wordTranslate + 'px', opacity: showMeaning ? 1 : 0 }">
       <div v-for="(g, i) in posGroups" :key="i" class="pos-row">
@@ -45,19 +87,91 @@
       <button class="idt-btn mastered" @click="onIdentify('mastered')">已掌握 <kbd>3</kbd></button>
     </div>
 
-    <ul v-if="sentences.length && type !== 'identify' && revealRest" class="sent-list">
-      <li v-for="(se, i) in sentences.slice(0, 3)" :key="i" class="sent-item" @click="speakSentence(i)">
-        <kbd>{{ i + 1 }}</kbd><span class="sent-text">{{ se }}</span>
-      </li>
-    </ul>
+    <div v-if="type !== 'identify' && revealRest" class="detail-block">
+      <template v-if="sentencePairs.length">
+        <div class="line-white"></div>
+        <div v-for="(se, i) in sentencePairs" :key="i" class="sentence">
+          <div class="s-en">
+            <!-- 照 TypeWord.vue 的 ClickableEnglishText：例句里的词能点开查释义，
+                 目标词本身高亮。整句朗读挪到右边那个小喇叭上 ——
+                 原来是点句子任意位置朗读，接了查词就冲突了。 -->
+            <span
+              v-for="(tk, ti) in tokensOf(se.en)"
+              :key="ti"
+              :class="tk.isWord ? (isTargetToken(tk.text) ? 'tk hit' : 'tk') : ''"
+              @click="tk.isWord && lookup(tk.text, $event)"
+            >{{ tk.text }}</span>
+            <button class="s-speak" title="朗读这句" @click.stop="speakSentence(i)">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+            </button>
+          </div>
+          <div v-if="se.zh" class="s-cn">{{ se.zh }}</div>
+        </div>
+      </template>
 
-    <div v-if="settings.showEtymologyAndRelWords && revealRest" class="ety-row">
-      <span v-if="morphemeText" class="ety-item">{{ morphemeText }}</span>
-      <span v-if="relWords.length" class="ety-item">相关：{{ relWords.join('、') }}</span>
+      <template v-if="phrasePairs.length">
+        <div class="line-white"></div>
+        <div class="blk">
+          <div class="label">短语</div>
+          <div class="blk-body">
+            <div v-for="(p, i) in phrasePairs" :key="i" class="phrase">
+              <span class="en">
+                <span
+                  v-for="(tk, ti) in tokensOf(p.en)"
+                  :key="ti"
+                  :class="tk.isWord ? (isTargetToken(tk.text) ? 'tk hit' : 'tk') : ''"
+                  @click="tk.isWord && lookup(tk.text, $event)"
+                >{{ tk.text }}</span>
+              </span>
+              <!-- 短语原来连发音都没有，上游是每条后面挂一个小喇叭 -->
+              <button class="s-speak" title="朗读这个短语" @click.stop="speakPhrase(p.en)">
+                <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+              </button>
+              <span class="cn">{{ p.zh }}</span>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="synonymList.length">
+        <div class="line-white"></div>
+        <div class="blk">
+          <div class="label">近义词</div>
+          <div class="blk-body syno-body">
+            <span v-for="(sy, i) in synonymList" :key="i" class="syno" :title="sy.difference || ''">{{ sy.word }}</span>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="morphemeText">
+        <div class="line-white"></div>
+        <div class="blk">
+          <div class="label">词根</div>
+          <div class="blk-body">{{ morphemeText }}</div>
+        </div>
+      </template>
+
+      <template v-if="word.etymology && settings.showEtymologyAndRelWords">
+        <div class="line-white"></div>
+        <div class="blk">
+          <div class="label">词源</div>
+          <div class="blk-body pre">{{ word.etymology }}</div>
+        </div>
+      </template>
+
+      <template v-if="relWords.length && settings.showEtymologyAndRelWords">
+        <div class="line-white"></div>
+        <div class="blk">
+          <div class="label">相关词</div>
+          <div class="blk-body syno-body">
+            <span v-for="(w, i) in relWords" :key="i" class="syno">{{ w }}</span>
+          </div>
+        </div>
+      </template>
     </div>
 
     <div v-if="settings.showNearWord && showNear && prevWord" class="prev-corner">
-      <span class="pc-arrow">←</span>
+      <span class="pc-label">上一个</span>
       <span class="pc-word">{{ prevWord }}</span>
     </div>
   </div>
@@ -71,6 +185,11 @@ import { getStudySettings } from '@/shared/core/studySettings'
 import { playWord, playSentence } from '@/shared/core/audio'
 import { isSpellingCorrect } from '@/shared/core/spellJudge'
 import { typeStep, clearAfterWrong } from '@/shared/core/typeStep'
+import { setKeySound, playKeySound } from '@/shared/core/keySound'
+import { useWordStore } from '@/shared/stores/wordStore'
+import { isMastered, removeMastered } from '@/shared/core/masteredWords'
+import WordLookupPopover from '@/apps/word-core/components/WordLookupPopover.vue'
+import { openWordLookup, splitEnglishText } from '@/shared/core/wordLookup'
 
 const props = defineProps<{
   prevWord?: string
@@ -87,9 +206,93 @@ const emit = defineEmits<{
   (e: 'wrong'): void
   (e: 'know'): void
   (e: 'mastered'): void
+  /** 跳过：不记错、不再安排，直接下一个（对应上游的 skip / Ignore） */
+  (e: 'skip'): void
 }>()
 
 const settings = getStudySettings()
+const wordStore = useWordStore()
+
+/* ---------- 单词操作：已掌握 / 笔记 / 收藏 ---------- */
+
+/**
+ * 已掌握。对应上游的 toggleWordSimple：
+ * 没标过就标上并跳到下一个（交给 StudyPage 的 onMastered 处理排除和推进），
+ * 已经标了就只是取消，停在原地。
+ */
+const masteredTick = ref(0)
+const masteredNow = computed(() => {
+  void masteredTick.value
+  return isMastered(props.word.word)
+})
+async function onToggleMastered() {
+  if (masteredNow.value) {
+    await removeMastered(props.word.word)
+    masteredTick.value++
+    return
+  }
+  emit('mastered')
+}
+
+const noteEditing = ref(false)
+const noteDraft = ref('')
+function toggleNote() {
+  noteEditing.value = !noteEditing.value
+  noteDraft.value = noteEditing.value ? (props.word.userNote || '') : ''
+}
+async function saveNote() {
+  await wordStore.updateWordFields(props.word.id, { userNote: noteDraft.value.trim() || undefined })
+  noteEditing.value = false
+}
+function cancelNote() {
+  noteEditing.value = false
+  noteDraft.value = ''
+}
+async function deleteNote() {
+  await wordStore.updateWordFields(props.word.id, { userNote: undefined })
+  noteEditing.value = false
+  noteDraft.value = ''
+}
+
+/* ---------- 例句 / 短语里的可点词 ---------- */
+
+/** 切成「单词 / 非单词」片段，跟阅读助手用的是同一个 splitEnglishText */
+function tokensOf(text: string) {
+  return splitEnglishText(text || '')
+}
+
+/** 这个词是不是正在练的目标词（含常见变形），是就高亮 */
+function isTargetToken(tk: string): boolean {
+  const t = tk.toLowerCase()
+  const base = props.word.word.toLowerCase()
+  if (t === base) return true
+  // 只做最保守的几种：复数/三单、过去式、进行时。判错了顶多少高亮一个词
+  if (t.length > base.length && t.startsWith(base)) {
+    return ['s', 'es', 'd', 'ed', 'ing', "'s"].includes(t.slice(base.length))
+  }
+  return false
+}
+
+function lookup(raw: string, e: MouseEvent) {
+  const el = e.target as HTMLElement
+  openWordLookup(raw, el, async candidates => {
+    for (const c of candidates) {
+      const hit = wordStore.words.find(w => w.word.toLowerCase() === c.toLowerCase())
+      if (hit) return hit
+    }
+    return null
+  })
+}
+
+function speakPhrase(text: string) {
+  playWord(text, settings.soundType || 'us', settings.wordSoundSpeed).catch(() => {})
+}
+
+const collectOpen = ref(false)
+async function collectTo(groupId: string) {
+  await wordStore.addWordToGroup(props.word.id, groupId)
+  collectOpen.value = false
+}
 
 const input = ref('')      // 已经打对的部分
 const wrong = ref('')      // 当前打错的那一个字符（500ms 后自动清）
@@ -112,8 +315,33 @@ function cancelWrongClear() {
 let wordCompletedAt = 0    // 打完的时刻，用来做空格冷却
 let repeatDone = 0         // 这个词在本次已经打对几遍（repeatCount 用）
 
+/** 只要英文的那一份，句子跟打模式要用 */
 const sentences = computed<string[]>(() =>
   (props.word.example_sentences || []).map(e => String(e.en || '').trim()).filter(Boolean)
+)
+
+/**
+ * 带译文的例句。原来 sentences 只 map 了 e.en，**中文 e.zh 被直接丢掉**，
+ * 所以卡片上是三条光秃秃的英文。数据一直都在，是我们没取。
+ */
+const sentencePairs = computed(() =>
+  (props.word.example_sentences || [])
+    .map(e => ({ en: String(e.en || '').trim(), zh: String(e.zh || '').trim() }))
+    .filter(x => x.en)
+)
+
+/** 短语搭配，对应 TypeWords 的 phrases 区块 */
+const phrasePairs = computed(() =>
+  (props.word.common_phrases || [])
+    .map(p => ({ en: String(p.phrase_en || '').trim(), zh: String(p.phrase_zh || '').trim() }))
+    .filter(x => x.en)
+)
+
+/** 近义词，对应它的 synos 区块 */
+const synonymList = computed(() =>
+  (props.word.synonyms || [])
+    .map(x => (typeof x === 'string' ? { word: x, difference: '' } : x))
+    .filter((x: any) => x?.word)
 )
 
 const showNear = computed(() => props.type !== 'dictation' && props.type !== 'listen')
@@ -225,26 +453,46 @@ const choices = computed<{ text: string; right: boolean }[]>(() => {
   return all
 })
 
+/**
+ * 选择题。照它的 select()：
+ * 选完**停在原地**并把单词摊开（对错都摊），按空格/回车才进下一个。
+ * 我原来是 420ms / 900ms 之后自动跳，等于不给看答案的时间。
+ */
 function pickChoice(i: number) {
   if (choicePicked.value !== null) return
   choicePicked.value = i
+  revealed.value = true
   const ok = choices.value[i]?.right
-  if (ok) playCorrect(); else playError()
-  setTimeout(() => {
-    onIdentify(ok ? 'know' : 'unknown')
-    choicePicked.value = null
-  }, ok ? 420 : 900)
+  if (ok) {
+    playCorrect()
+    emit('know')
+  } else {
+    playError()
+    emit('wrong')
+    if (settings.wordSound) playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
+  }
 }
 
+/** 按住提示键时的临时显示，松开就没 */
+const peeking = ref(false)
+
+/**
+ * 释义显示。照 TypeWords 的 watchPracticeType 那张表：
+ *   跟写 遮词否/释义是   拼写 遮词是/释义是   听写 遮词是/释义否
+ *   默写 遮词是/释义是   自测 遮词否/释义否
+ * 自测原来写成「释义常显 + 单词遮住」，跟上游正好相反 ——
+ * 那样是看中文猜词，不是看着词自评认不认识。
+ */
 const showMeaning = computed(() => {
-  if (props.type === 'identify') return true
+  if (props.type === 'identify') return revealed.value || peeking.value
   if (props.type === 'dictation' || props.type === 'listen') return props.type === 'dictation'
   return props.showTranslate ?? settings.showTranslate
 })
 
 const revealRest = computed(() => {
+  if (peeking.value) return true
   if (props.hideWord && !revealed.value) return false
-  if (props.type === 'followWrite') return true
+  if (props.type === 'followWrite' || props.type === 'identify') return true
   return revealed.value
 })
 
@@ -269,17 +517,40 @@ function isSubmitKey(e: KeyboardEvent): boolean {
 }
 
 
+/**
+ * 按住看答案（对应 TypeWord.vue 的 showWord / hideWord）。
+ *
+ * 两处照它改：
+ * 1. 按住才显示、松开就藏 —— 我们原来是按一下就永久摊开
+ * 2. 跟写模式（且不是默写）下看答案不记错词 —— 那个模式本来就把词摆着，
+ *    再记一次错是白扣。它的判断是
+ *      if (wordPracticeType !== FollowWrite || dictation) typo()
+ */
+function showWord() {
+  if (!settings.allowWordTip) return
+  const isFollowWrite = props.type === 'followWrite' && !props.hideWord
+  if (!isFollowWrite && !revealed.value) emit('wrong')
+  peeking.value = true
+}
+
+function hideWord() {
+  peeking.value = false
+}
+
+/**
+ * 默写模式下还没作答就去听发音 / 看答案，算一次错。
+ * 对应它的 checkIsWrong()：不这么记的话，默写模式可以靠反复点喇叭白嫖。
+ */
+function checkIsWrong() {
+  const isDictation = props.type === 'dictation' || props.hideWord
+  if (isDictation && !revealed.value && !isRight.value) emit('wrong')
+}
+
 function speak() {
-  playWord(props.word.word, 'us', settings.wordSoundSpeed)
+  playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
 }
 
 let audioCtx: AudioContext | null = null
-const KEY_TONES: Record<string, { type: OscillatorType; freq: number; ms: number }> = {
-  mechanical: { type: 'square', freq: 1500, ms: 16 },
-  membrane: { type: 'sine', freq: 700, ms: 26 },
-  typewriter: { type: 'triangle', freq: 320, ms: 34 },
-  none: { type: 'sine', freq: 0, ms: 0 }
-}
 
 function beep(freq: number, ms: number, gain = 0.06, type: OscillatorType = 'sine') {
   if (!freq || !ms) return
@@ -298,51 +569,10 @@ function beep(freq: number, ms: number, gain = 0.06, type: OscillatorType = 'sin
   }
 }
 const vol = (v: number | undefined) => Math.max(0, Math.min(1, (v ?? 100) / 100))
-/**
- * 键盘声。
- *
- * 原来是一个 1500Hz 的方波，尖、单调、像电子表报时。真实键帽声是一段极短的
- * 宽带噪声（撞击）+ 快速衰减，所以这里用一小段白噪声过带通滤波来合成，
- * 每次按键把中心频率随机抖动一点，连打时不会像节拍器。
- *
- * TypeWords 用的是几十个录好的 wav（keyboardSoundFile），从它的 CDN 拉，
- * 仓库里没有这些音频文件，拿不到就只能合成一个接近的。
- */
-function keyClick(gain: number) {
-  try {
-    audioCtx = audioCtx || new AudioContext()
-    const ctx = audioCtx
-    const dur = 0.035
-    const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate)
-    const ch = buf.getChannelData(0)
-    for (let i = 0; i < ch.length; i++) {
-      // 指数衰减的白噪声：起音脆，尾巴短
-      ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / ch.length, 6)
-    }
-    const src = ctx.createBufferSource()
-    src.buffer = buf
-
-    const bp = ctx.createBiquadFilter()
-    bp.type = 'bandpass'
-    bp.frequency.value = 1900 + (Math.random() - 0.5) * 500
-    bp.Q.value = 1.1
-
-    const lp = ctx.createBiquadFilter()
-    lp.type = 'lowpass'
-    lp.frequency.value = 5200
-
-    const g = ctx.createGain()
-    g.gain.value = Math.max(0, Math.min(1, gain))
-
-    src.connect(bp).connect(lp).connect(g).connect(ctx.destination)
-    src.start()
-  } catch {
-  }
-}
-
 const playKey = () => {
   if (!settings.keyboardSound) return
-  keyClick(0.22 * vol(settings.keyboardSoundVolume))
+  setKeySound(settings.keyboardSoundFile)
+  playKeySound(settings.keyboardSoundVolume)
 }
 const playCorrect = () => settings.effectSound && beep(880, 90, 0.06 * vol(settings.effectSoundVolume))
 const playError = () => settings.effectSound && beep(220, 140, 0.08 * vol(settings.effectSoundVolume))
@@ -358,8 +588,12 @@ function reset() {
   wordCompletedAt = 0
   repeatDone = 0
   sentenceIdx.value = -1
+  noteEditing.value = false
+  noteDraft.value = ''
+  collectOpen.value = false
+  masteredTick.value++
   if (settings.wordSound && props.type !== 'dictation') {
-    playWord(props.word.word, 'us', settings.wordSoundSpeed)
+    playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
       .then(() => {
         if (!settings.autoPlayFirstSentence) return
         if (props.type === 'dictation' || props.type === 'listen') return
@@ -403,7 +637,9 @@ function finish(delay: boolean) {
     }
     sentenceIdx.value = -1
   }
-  const wantRepeat = settings.repeatCount === 0 ? settings.repeatCustomCount : settings.repeatCount
+  // 照 shouldRepeat()：repeatCount == 100 是「用自定义次数」的哨兵值。
+  // 我原来自己定成 0，跟它对不上。
+  const wantRepeat = settings.repeatCount === 100 ? settings.repeatCustomCount : settings.repeatCount
   if (props.type === 'followWrite' && wantRepeat > repeatDone + 1) {
     clearJumpTimer()
     jumpTimer = setTimeout(() => {
@@ -413,7 +649,7 @@ function finish(delay: boolean) {
       wrong.value = ''
       revealed.value = false
       inputLock = false
-      if (settings.wordSound) playWord(props.word.word, 'us', settings.wordSoundSpeed)
+      if (settings.wordSound) playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
     }, settings.waitTimeForChangeWord)
     return
   }
@@ -425,7 +661,17 @@ function finish(delay: boolean) {
   }
 }
 
+/** 松开提示键就把答案藏回去（它的 onKeyUp 就是无条件 hideWord） */
+function onKeyup() {
+  hideWord()
+}
+
 function onKeydown(e: KeyboardEvent) {
+  // 正在写笔记就把键盘让给输入框，别把笔记内容打进单词里
+  if (noteEditing.value) {
+    const t = e.target as HTMLElement | null
+    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return
+  }
   if (choiceOn.value && /^[1-9]$/.test(e.key)) {
     const i = Number(e.key) - 1
     if (i < choices.value.length) { e.preventDefault(); pickChoice(i); return }
@@ -457,18 +703,23 @@ function onKeydown(e: KeyboardEvent) {
   const km = settings.shortcutKeyMap
   if (props.type !== 'identify' && hitShortcut(km.showTip)) {
     e.preventDefault()
-    if (!settings.allowWordTip || revealed.value) return
-    revealed.value = true
-    emit('wrong')
+    showWord()
     return
   }
-  if (hitShortcut(km.replaySound)) { e.preventDefault(); speak(); return }
+  if (hitShortcut(km.replaySound)) { e.preventDefault(); checkIsWrong(); speak(); return }
+  /**
+   * 跳过。上游的 skip() 是 addExcludeWord() + next(false) ——
+   * **不记错**，把这个词排除掉不再安排。我们原来写成 emit('wrong') + emit('complete')，
+   * 等于「跳过就算你错一次」，跟上游正好相反。
+   */
   if (hitShortcut(km.skipWord)) {
     e.preventDefault()
-    emit('wrong')
-    emit('complete')
+    emit('skip')
     return
   }
+  if (hitShortcut(km.toggleMastered)) { e.preventDefault(); onToggleMastered(); return }
+  if (hitShortcut(km.collectWord)) { e.preventDefault(); collectOpen.value = !collectOpen.value; return }
+  if (hitShortcut(km.editNote)) { e.preventDefault(); toggleNote(); return }
 
   // 数字键读例句：只在目标词本身不含这个数字时才抢，否则同样会吃掉输入
   if (props.type !== 'identify' && !e.ctrlKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
@@ -488,6 +739,23 @@ function onKeydown(e: KeyboardEvent) {
   }
 
   if (props.type === 'identify') {
+    // 选择题选完之后，空格/回车才进下一个（它是 Toast 提示「按空格继续」）
+    if (choicePicked.value !== null) {
+      if (e.code === 'Space' || e.key === 'Enter') {
+        e.preventDefault()
+        choicePicked.value = null
+        emit('complete')
+      }
+      return
+    }
+    if (choiceOn.value && /^Digit[1-9]$/.test(e.code)) {
+      const idx = Number(e.code.slice(5)) - 1
+      if (idx < choices.value.length) {
+        e.preventDefault()
+        pickChoice(idx)
+      }
+      return
+    }
     if (['Digit1', 'Digit2', 'Digit3'].includes(e.code)) {
       e.preventDefault()
       onIdentify(e.code === 'Digit1' ? 'know' : e.code === 'Digit2' ? 'unknown' : 'mastered')
@@ -525,7 +793,7 @@ function onKeydown(e: KeyboardEvent) {
       } else {
         playError()
         emit('wrong')
-        if (settings.wordSound) playWord(props.word.word, 'us', settings.wordSoundSpeed)
+        if (settings.wordSound) playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
       }
       return
     }
@@ -551,7 +819,7 @@ function onKeydown(e: KeyboardEvent) {
     playError()
     emit('wrong')
     if (settings.wordSound && props.type !== 'dictation') {
-      playWord(props.word.word, 'us', settings.wordSoundSpeed)
+      playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
     }
     waitClear = true
     cancelWrongClear()
@@ -587,7 +855,7 @@ function del() {
     revealed.value = false
     if (props.type === 'identify') {
       emit('wrong')
-      if (settings.wordSound) playWord(props.word.word, 'us', settings.wordSoundSpeed)
+      if (settings.wordSound) playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
     }
     return
   }
@@ -595,48 +863,65 @@ function del() {
   else input.value = input.value.slice(0, -1)
 }
 
+/**
+ * 自测三键。照它的 know / mastered / unknown 三个函数：
+ *
+ *   know    先把答案摊开让你核对自己是不是真认识，emit('know') 之后**不跳词**，
+ *           再按一次才走。我原来是直接 emit('know') + emit('complete')，
+ *           等于点完就过，根本没机会看自己想的对不对。
+ *   unknown 摊开 + 记错 + 发音，同样停在原地。
+ *   mastered 直接走。
+ */
 function onIdentify(kind: 'know' | 'unknown' | 'mastered') {
   if (kind === 'mastered') {
     emit('mastered')
     return
   }
-  if (kind === 'unknown') {
-    if (!revealed.value) {
-      revealed.value = true
+  if (!revealed.value) {
+    revealed.value = true
+    if (kind === 'know') {
+      emit('know')
+    } else {
       emit('wrong')
-      if (settings.wordSound) playWord(props.word.word, 'us', settings.wordSoundSpeed)
-      return
+      if (settings.wordSound) playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
     }
+    return
   }
-  if (kind === 'know') emit('know')
   emit('complete')
 }
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
   nextTick(reset)
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keyup', onKeyup)
   clearJumpTimer()
   cancelWrongClear()
 })
 </script>
 
 <style scoped lang="scss">
+/* 照它的 .typing-word：width:100% + flex:1，撑满练习区那一栏，
+   不再自己写死宽度把内容夹在中间一条里 */
 .typing-card {
+  width: 100%;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  padding: 40px 20px;
+  padding: 0 20px;
   text-align: center;
+  word-break: break-word;
 }
 .meaning {
-  font-size: 17px;
+  font-size: 1.2rem;
   color: var(--r-ink, #1f2328);
   margin: 0;
-  max-width: 660px;
+  max-width: 100%;
   line-height: 1.7;
   transition: opacity .2s ease;
   text-align: left;
@@ -645,7 +930,7 @@ onUnmounted(() => {
 /* 照 TranslationList.vue：词性用强调色、定宽 min-w-12（3rem），
    释义在右边成块换行，不跟着词性缩进走。 */
 .pos {
-  flex-shrink: 0; min-width: 3rem;
+  flex-shrink: 0; min-width: 2.5rem;   /* @apply min-w-10 */
   color: var(--r-accent, #5b7a99);
 }
 .pos-text { flex: 1; min-width: 0; }
@@ -691,14 +976,6 @@ onUnmounted(() => {
   display: inline-flex;
 }
 .identify-row { display: flex; gap: 10px; margin-top: 6px; }
-.ety-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12.5px; opacity: 0.75; }
-.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-.choice-btn {
-  text-align: left; padding: 10px 12px; border-radius: 9px; cursor: pointer;
-  border: 1px solid var(--r-border, #ddd); background: var(--r-paper, #fff);
-  color: var(--r-ink, #1c1c1c); font-size: 13.5px; line-height: 1.5;
-  transition: background-color .15s ease, border-color .15s ease;
-}
 .choice-btn kbd { opacity: 0.5; margin-right: 6px; }
 .choice-btn.right { border-color: #3a8a5c; background: color-mix(in srgb, #3a8a5c 14%, transparent); }
 .choice-btn.wrong { border-color: #b5493c; background: color-mix(in srgb, #b5493c 14%, transparent); }
@@ -715,6 +992,13 @@ onUnmounted(() => {
   gap: 6px;
   &:hover { background: var(--r-paper, #fff); }
 }
+/* 「已掌握」比另外两个更肯定，给个明确的绿色，不然三个按钮长得一样分不清 */
+.idt-btn.mastered {
+  border-color: color-mix(in srgb, #3a8a5c 45%, transparent);
+  color: #3a8a5c;
+  &:hover { background: color-mix(in srgb, #3a8a5c 8%, transparent); }
+}
+
 .idt-btn kbd {
   font-size: 11px;
   opacity: 0.5;
@@ -723,17 +1007,6 @@ onUnmounted(() => {
   padding: 0 4px;
 }
 .hint { font-size: 12.5px; color: var(--r-ink2, #aaa); margin: 0; }
-.sent-list {
-  list-style: none; margin: 10px 0 0; padding: 0;
-  max-width: 640px; text-align: left;
-}
-.sent-item {
-  display: flex; gap: 8px; align-items: baseline;
-  padding: 5px 0; cursor: pointer; color: var(--r-ink2, #8a9099);
-  font-size: 14px; line-height: 1.55;
-  &:hover { color: var(--r-ink, #1f2328); }
-  kbd { flex-shrink: 0; }
-}
 .sent-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 10px; }
 .sent-btn {
   display: inline-flex; align-items: center; gap: 5px;
@@ -741,11 +1014,99 @@ onUnmounted(() => {
   border-radius: 9999px; padding: 3px 10px; font-size: 12px; cursor: pointer;
 }
 .sent-btn:hover { color: var(--r-accent, #8a4b3a); border-color: var(--r-accent, #8a4b3a); }
+/* 原来是 left: nav+56px; top: 22px —— 正好贴在退出按钮（nav+14，宽 30）右边，
+   而它开头还有一个「←」，看上去就是两个返回号。改成挪到退出按钮正下方，
+   箭头换成「上一个」三个字，不再和返回撞。 */
 .prev-corner {
-  position: fixed; left: calc(var(--lb-nav-w, 56px) + 56px); top: 22px;
-  display: flex; align-items: center; gap: 8px;
-  color: var(--r-ink2, #c3c8ce); font-size: 15px; pointer-events: none;
+  position: fixed; left: calc(var(--lb-nav-w, 56px) + 14px); top: 52px;
+  display: flex; align-items: center; gap: 6px;
+  color: var(--r-ink2, #c3c8ce); font-size: 14px; pointer-events: none;
 }
-.pc-arrow { font-size: 17px; }
+.pc-label { font-size: 12px; opacity: .75; }
+
+/* 笔记/收藏展开后的两个小面板（.icon-row 上面已经有了，不再重复定义） */
+.speak-btn.on { color: var(--r-accent, #8a4b3a); }
+.collect-box {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  max-width: 520px;
+}
+.cb-item {
+  border: 1px solid var(--r-line, #e5e7eb); background: transparent;
+  color: var(--r-ink, #1f2328); font-family: inherit; font-size: 13px;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer;
+}
+.cb-item:hover { background: var(--r-ui, #f4f5f7); }
+.cb-item.in { opacity: .55; }
+.cb-in { margin-left: 6px; font-size: 11px; color: var(--r-ink2, #9aa0a6); }
+.cb-empty { font-size: 13px; color: var(--r-ink2, #9aa0a6); }
+.note-box { width: 100%; max-width: 520px; }
+.nb-input {
+  width: 100%; padding: 8px 10px; font-family: inherit; font-size: 13.5px;
+  border: 1px solid var(--r-line, #e5e7eb); border-radius: 10px;
+  background: transparent; color: var(--r-ink, #1f2328); resize: vertical;
+}
+.nb-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+.nb-btn {
+  border: none; background: var(--r-ui, #f4f5f7); color: var(--r-ink, #1f2328);
+  font-family: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+}
+.nb-btn.primary { background: var(--r-ink, #1f2328); color: #fff; }
+/* 例句/短语里的可点词 */
+.tk { cursor: pointer; border-radius: 3px; }
+.tk:hover { background: var(--r-ui, #eef1f4); }
+.tk.hit {
+  color: var(--r-accent, #8a4b3a);
+  font-weight: 600;
+  background: rgba(138, 75, 58, .09);
+}
+.s-speak {
+  border: none; background: transparent; cursor: pointer; padding: 0 4px;
+  color: var(--r-ink2, #b6bcc3); vertical-align: middle;
+}
+.s-speak:hover { color: var(--r-accent, #8a4b3a); }
+.note-view {
+  max-width: 520px; font-size: 13px; line-height: 1.6;
+  color: var(--r-ink2, #6b7280); white-space: pre-wrap;
+}
+/* 遮词的模式下音标也得遮：默写时露着音标等于把答案给出去了 */
+.ph-hide { filter: blur(6px); user-select: none; }
 .pc-word { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 释义以下各块，数值取自 TypeWord.vue：
+     .label { width: 6rem; padding-top: 0.2rem; flex-shrink: 0 }
+     .pos   { min-width: 2.5rem }        (@apply min-w-10)
+     .en    { font-size: 1.125rem }      (@apply text-lg)
+     .cn    { font-size: 1rem }          (@apply text-base)
+     .sentence { 圆角 + px-3 py-2 -mx-3 }
+   块与块之间是 <div class="line-white my-3"> 一条细线。 */
+.detail-block { width: 100%; text-align: left; }
+.line-white {
+  height: 1px; background: var(--r-border, #eceff2);
+  margin: 0.75rem 0;                /* my-3 */
+}
+.sentence {
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;          /* py-2 px-3 */
+  margin: 0 -0.75rem;               /* -mx-3 */
+  /* 整句不再可点了：点词是查释义，朗读挪到右边那个小喇叭。
+     留着 cursor: pointer 会让人以为点哪儿都能读。 */
+  transition: all .3s;
+  &:hover { background: color-mix(in srgb, var(--r-accent, #5b7a99) 8%, transparent); }
+}
+.s-en { font-size: 1.25rem; line-height: 1.6; color: var(--r-ink, #1f2328); }
+.s-cn { font-size: 1rem; line-height: 1.6; color: var(--r-ink2, #8a9099); }
+.blk { display: flex; }
+.label {
+  width: 6rem; padding-top: 0.2rem; flex-shrink: 0;
+  color: var(--r-ink2, #9aa0a6); font-size: 1rem;
+}
+.blk-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.blk-body.pre { white-space: pre-wrap; font-size: 1rem; color: var(--r-ink2, #8a9099); }
+/* 短语行：英文 + 小喇叭 + 中文。gap 从 1rem 收到 0.6rem，
+   因为中间多插了一个喇叭按钮，原来的间距会把中文推得太远 */
+.phrase { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.phrase .en { font-size: 1.125rem; color: var(--r-ink, #1f2328); }
+.phrase .cn { font-size: 1rem; color: var(--r-ink2, #8a9099); }
+.syno-body { flex-direction: row; flex-wrap: wrap; gap: 0.25rem 1rem; }
+.syno { font-size: 1.125rem; color: var(--r-accent, #5b7a99); cursor: help; }
 </style>

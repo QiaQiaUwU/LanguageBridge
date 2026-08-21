@@ -4,7 +4,6 @@
 
     <section class="card">
       <h3 class="card-title">外观</h3>
-      <p class="card-sub">关系连线的三种颜色不跟主题变。</p>
       <div class="skin-grid">
         <button
           v-for="s in themeStore.skins"
@@ -23,9 +22,6 @@
 
     <section class="card">
       <h3 class="card-title">词库体检</h3>
-      <p class="card-sub">
-        音标、例句、词性走免费词典；话题、词根、考纲标签要过 AI。
-      </p>
       <div class="health-grid">
         <div class="health-cell"><span class="hn">{{ health.total }}</span><span class="hl">词条总数</span></div>
         <div class="health-cell" :class="{ warn: health.noPhonetic }"><span class="hn">{{ health.noPhonetic }}</span><span class="hl">缺音标</span></div>
@@ -44,15 +40,44 @@
     </section>
 
     <section class="card">
+      <h3 class="card-title">阅读与划线</h3>
+
+      <div class="op-row">
+        <div class="op-info">
+          <span class="op-name">默认高亮色</span>
+          <span class="op-desc">没选色时用它</span>
+        </div>
+        <div class="hl-picker">
+          <button
+            v-for="c in HL_COLORS"
+            :key="c.name"
+            class="hl-dot"
+            :class="{ on: defaultHl === c.name }"
+            :style="{ background: c.hex }"
+            :title="c.label"
+            @click="defaultHl = c.name"
+          ></button>
+        </div>
+      </div>
+
+      <div class="op-row">
+        <div class="op-info">
+          <span class="op-name">自定义颜色</span>
+          <span class="op-desc">跟悬浮球用同一个颜色</span>
+        </div>
+        <input v-model="customHl" type="color" class="hl-input" title="选一个颜色" />
+      </div>
+    </section>
+
+    <section class="card">
       <h3 class="card-title">词库整理</h3>
 
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">合并重复词条</span>
           <span class="op-desc">
-            重复记录合并成一条，保留信息更全的那份。
-            <template v-if="dupCount > 0"><b>当前检测到 {{ dupCount }} 个词有重复记录。</b></template>
-            <template v-else-if="dupChecked">当前没有重复。</template>
+            <template v-if="dupCount > 0"><b>{{ dupCount }} 个词有重复记录</b></template>
+            <template v-else-if="dupChecked">没有重复</template>
           </span>
         </div>
         <button class="ghost-btn" :disabled="busy" @click="doDedupe">
@@ -64,8 +89,7 @@
         <div class="op-info">
           <span class="op-name">补全释义与音标</span>
           <span class="op-desc">
-            补音标、例句、词性，不花 AI 额度。
-            <template v-if="lackBasicCount > 0"><b>当前 {{ lackBasicCount }} 个词条信息不全。</b></template>
+            <template v-if="lackBasicCount > 0"><b>{{ lackBasicCount }} 个词条信息不全</b></template>
           </span>
         </div>
         <button class="ghost-btn" :disabled="busy" @click="doEnrichBasic">
@@ -76,7 +100,6 @@
         <div class="op-info">
           <span class="op-name">从释义库回填考纲标签</span>
           <span class="op-desc">
-            按词在哪几个子词库里判断，一两秒跑完，不花 AI 额度。
             <b>当前 {{ health.noTags }} 个词缺考纲标签。</b>
           </span>
         </div>
@@ -84,36 +107,54 @@
           {{ backfilling ? `回填中 ${backfillDone}/${backfillTotal}` : '开始回填' }}
         </button>
       </div>
-      <div class="op-row">
-        <div class="op-info">
-          <span class="op-name">从词库重建工作缓存</span>
-          <span class="op-desc">
-            按 resources/word_explanations/ 重新生成 data/words.json。
-            <b>内容以词库为准，学习状态保留</b>。改过词库文件时点一次。
-          </span>
+      <!-- 重建缓存/索引/数据库体检是出问题时才用的运维操作，
+           平时摆在这里只会让人以为需要定期点一下。收进折叠区。 -->
+      <button class="fix-toggle" @click="showFixTools = !showFixTools">
+        {{ showFixTools ? '收起' : '出问题了？修复工具' }}
+      </button>
+      <template v-if="showFixTools">
+        <div class="op-row">
+          <div class="op-info"><span class="op-name">从词库重建工作缓存</span></div>
+          <button class="ghost-btn small" :disabled="rebuilding" @click="doRebuildCache">
+            {{ rebuilding ? '重建中…' : '重建缓存' }}
+          </button>
         </div>
-        <button class="ghost-btn small" :disabled="rebuilding" @click="doRebuildCache">
-          {{ rebuilding ? '重建中…' : '重建缓存' }}
-        </button>
-      </div>
-      <p v-if="rebuildMsg" class="msg">{{ rebuildMsg }}</p>
-      <div class="op-row">
-        <div class="op-info">
-          <span class="op-name">重建词库索引</span>
-          <span class="op-desc">
-            抽成 resources/word_index.json，之后筛选只读这一份。补全跑完后点一次。
-          </span>
+        <p v-if="rebuildMsg" class="msg">{{ rebuildMsg }}</p>
+        <div class="op-row">
+          <div class="op-info"><span class="op-name">重建词库索引</span></div>
+          <button class="ghost-btn small" :disabled="reindexing" @click="doReindex">
+            {{ reindexing ? '扫描中…' : '重建索引' }}
+          </button>
         </div>
-        <button class="ghost-btn small" :disabled="reindexing" @click="doReindex">
-          {{ reindexing ? '扫描中…' : '重建索引' }}
-        </button>
-      </div>
-      <p v-if="reindexMsg" class="msg">{{ reindexMsg }}</p>
+        <p v-if="reindexMsg" class="msg">{{ reindexMsg }}</p>
+        <div class="op-row">
+          <div class="op-info">
+            <span class="op-name">同时跑几个对轴</span>
+            <span class="op-desc">机器好可以调高；跑起来明显卡顿就调回 1</span>
+          </div>
+          <select v-model.number="alignConcurrency" class="tw-select" style="width: 90px">
+            <option :value="1">1 个</option>
+            <option :value="2">2 个</option>
+            <option :value="3">3 个</option>
+            <option :value="4">4 个</option>
+          </select>
+        </div>
+
+        <div class="op-row">
+          <div class="op-info"><span class="op-name">数据库体检</span></div>
+          <button class="ghost-btn small" @click="runInspect">体检</button>
+        </div>
+        <div class="op-row">
+          <div class="op-info"><span class="op-name">测一下 AI 改不改得动英文</span></div>
+          <button class="ghost-btn small" :disabled="probing" @click="runProbe">{{ probing ? '测试中' : '测试' }}</button>
+        </div>
+        <p v-if="probeMsg" class="msg">{{ probeMsg }}</p>
+        <pre v-if="dbInfo" class="db-info">{{ dbInfo }}</pre>
+      </template>
 
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">批量改标签</span>
-          <span class="op-desc">给整个词表统一加上或去掉一个标签。</span>
         </div>
         <div class="op-form">
           <select v-model="tagBookId" class="mini-select">
@@ -130,18 +171,40 @@
     </section>
 
     <section class="card">
+      <h3 class="card-title">导入词表</h3>
+
+      <div class="dict-bar">
+        <select v-model="twPicked" class="tw-select" :disabled="twBusy || !twList.length">
+          <option value="" disabled>{{ twList.length ? '选一本词典' : '先加载词典列表' }}</option>
+          <option v-for="d in twList" :key="d.url" :value="d.url">
+            {{ d.name }}（{{ d.length || '?' }} 词）
+          </option>
+        </select>
+        <button v-if="!twList.length" class="ghost-btn" :disabled="twBusy" @click="loadTwList">
+          {{ twBusy ? '加载中' : '加载词典列表' }}
+        </button>
+        <template v-else>
+          <button class="ghost-btn" :disabled="twBusy || !twPicked" @click="runTwMerge">
+            {{ twBusy && twMode === 'merge' ? twProgress || '处理中' : '用它补例句' }}
+          </button>
+          <button class="dark-btn" :disabled="twBusy || !twPicked" @click="runTwImport">
+            {{ twBusy && twMode === 'import' ? twProgress || '处理中' : '导入' }}
+          </button>
+        </template>
+      </div>
+
+      <p v-if="twMsg" class="msg">{{ twMsg }}</p>
+    </section>
+
+    <section class="card">
       <h3 class="card-title">AI 补全（考纲标签 / 话题 / 词根词缀 / 词族）</h3>
       <p class="card-sub">
-        补四类筛选数据：考纲标签、话题、词根词缀、词族。
         <b>只跑一次</b>，结果写进词条。补过的会跳过，中断了下次接着跑。
       </p>
 
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">跑之前先看一眼要做多少事</span>
-          <span class="op-desc">
-            共 {{ aiPreview.total }} 个词，只跑标红那一档。
-          </span>
         </div>
         <div class="op-form">
           <select v-model="aiScope" class="mini-select" :disabled="aiRunning">
@@ -161,13 +224,12 @@
       <div class="precheck">
         <div class="precheck-item run">
           <b>{{ aiForce ? aiPreview.pending + aiPreview.attempted : aiPreview.pending }}</b>
-          <span>这轮会跑</span>
+          <span>缺话题或词根的词</span>
           <em>约 {{ aiPreview.requests }} 次模型请求</em>
         </div>
         <div class="precheck-item">
           <b>{{ aiPreview.attempted }}</b>
           <span>跑过但没填上</span>
-          <em>功能词、短语这类本来就拆不出词根，默认跳过</em>
         </div>
         <div class="precheck-item">
           <b>{{ aiPreview.complete }}</b>
@@ -209,9 +271,6 @@
       <h3 class="card-title">词汇宇宙配色</h3>
       <p class="card-sub">
         三个上色维度各自独立：<b>按来源</b>（考纲）、<b>按话题</b>、<b>按掌握程度</b>，
-        改过的存在这台机器上，出厂配色一直留着。
-        随时能整个维度重置回去。
-        关系连线那三个色不开放修改。
       </p>
 
       <div class="dim-tabs">
@@ -220,7 +279,6 @@
           class="mode-btn" :class="{ on: colorDim === d.id }"
           @click="colorDim = d.id"
         >{{ d.label }}</button>
-        <span class="spacer"></span>
         <button class="ghost-btn small" :disabled="!dimHasOverrides" @click="doResetDim">
           重置这个维度
         </button>
@@ -253,7 +311,6 @@
             :title="armedColor ? '点一下染成上膛的颜色' : '点左上角色卡先上膛，或点右下角小圆点自由选色'"
             @click="armedColor && onPickColor(k.key, armedColor)"
           >
-            <span class="swatch-preview" :style="{ background: k.color }"></span>
             <span class="swatch-name">{{ k.label }}</span>
             <label class="swatch-free" title="自由选色" @click.stop>
               <input
@@ -269,10 +326,6 @@
       <div class="op-row" style="margin-top:14px">
         <div class="op-info">
           <span class="op-name">从图片取色</span>
-          <span class="op-desc">
-        传一张图，按图里的主色铺到当前维度。太暗的会自动提亮。
-            太暗的色会自动提亮——深空底色上太暗的节点等于看不见。
-          </span>
         </div>
         <div class="op-form">
           <input ref="paletteInputEl" type="file" accept="image/*" hidden @change="onPickImage" />
@@ -286,7 +339,6 @@
       </div>
 
       <div v-if="palette.length" class="palette-strip">
-        <span v-for="(c, i) in palette" :key="i" class="palette-chip" :style="{ background: c }" :title="c"></span>
       </div>
       <p v-if="paletteMsg" class="msg">{{ paletteMsg }}</p>
     </section>
@@ -296,16 +348,34 @@
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">学习与打字设置</span>
-          <span class="op-desc">每日新词量、复习比、打字判定等在学习设置里调。</span>
         </div>
         <button class="ghost-btn" @click="$router.push('/home')">去主页调整</button>
       </div>
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">已掌握词表</span>
-          <span class="op-desc">查看已经退出练习的词，可以把误标的捞回来。</span>
         </div>
         <button class="ghost-btn" @click="$router.push('/mastered')">管理</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3 class="card-title">定时提醒</h3>
+      <p class="op-desc">到点在悬浮球上提醒</p>
+      <div v-for="r in reminders" :key="r.id" class="op-row">
+        <div class="op-info">
+          <span class="op-name">{{ r.label }}</span>
+          <span class="op-desc">每 {{ r.minutes }} 分钟 · 下次 {{ nextAtText(r.nextAt) }}</span>
+        </div>
+        <button class="ghost-btn" @click="dropReminder(r.id)">删除</button>
+      </div>
+      <p v-if="!reminders.length" class="op-desc">还没有提醒。</p>
+      <div class="op-row">
+        <div class="op-info rm-new">
+          <input v-model="newReminderLabel" class="rm-input" placeholder="提醒我做什么（如：起来走走）" />
+          每 <input v-model.number="newReminderMinutes" type="number" min="1" max="1440" class="rm-num" /> 分钟
+        </div>
+        <button class="dark-btn" :disabled="!newReminderLabel.trim()" @click="addOne">添加</button>
       </div>
     </section>
 
@@ -314,14 +384,12 @@
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">整体备份</span>
-          <span class="op-desc">词条、词表、记忆卡片、错词本、已掌握、设置、配色，全部打成一个文件。</span>
         </div>
         <button class="ghost-btn" :disabled="busy" @click="doBackup">导出备份</button>
       </div>
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">恢复备份</span>
-          <span class="op-desc">同 id 的词条会被备份里的覆盖。恢复前建议先导一份当前的。</span>
         </div>
         <label class="ghost-btn file-btn">
           选择备份文件
@@ -332,7 +400,6 @@
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">只导词条</span>
-          <span class="op-desc">纯词条 JSON，给别的工具用。</span>
         </div>
         <button class="ghost-btn" :disabled="busy" @click="doExport">导出 JSON</button>
       </div>
@@ -353,6 +420,8 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useThemeStore } from '@/shared/stores/themeStore'
 import { useWordStore } from '@/shared/stores/wordStore'
+import { fetchTwDictList, fetchTwDict, buildTwPatch, twToWordItem } from '@/shared/core/typewordsDict'
+import { inspectDatabase } from '@/shared/core/database'
 import { buildBackup, restoreBackup } from '@/shared/core/backup'
 import type { WordItem } from '@/shared/types/WordItem'
 import { enrichWords, backfillTagsFromLibrary } from '@/shared/core/enrichment'
@@ -362,6 +431,32 @@ import {
   type EnrichAiProgress, type LibraryHealth
 } from '@/shared/core/aiEnrich'
 import { SOURCE_ORDER } from '@/apps/word-core/components/graphColors'
+import { reminders as reminderList, addReminder, removeReminder, loadReminders } from '@/shared/core/agentActions'
+
+/* ---------- 定时提醒 ---------- */
+loadReminders()
+const reminders = ref([...reminderList])
+const newReminderLabel = ref('')
+const newReminderMinutes = ref(30)
+
+function refreshReminders() {
+  reminders.value = [...reminderList]
+}
+function addOne() {
+  const label = newReminderLabel.value.trim()
+  if (!label) return
+  addReminder(label, Math.max(1, Math.min(1440, newReminderMinutes.value || 30)))
+  newReminderLabel.value = ''
+  refreshReminders()
+}
+function dropReminder(id: string) {
+  removeReminder(id)
+  refreshReminders()
+}
+function nextAtText(at: number): string {
+  const left = Math.max(0, Math.round((at - Date.now()) / 60000))
+  return left <= 0 ? '马上' : `${left} 分钟后`
+}
 import {
   sourceColor, masteryColor, topicColor, relationColor,
   setColor, applyPalette, resetDimension, hasOverrides,
@@ -381,6 +476,195 @@ const enriching = ref(false)
 const enrichDone = ref(0)
 const enrichTotal = ref(0)
 const tidyMsg = ref('')
+
+// ===== TypeWords 词典补全 =====
+const twList = ref<any[]>([])
+const twPicked = ref('')
+const twBusy = ref(false)
+const twMsg = ref('')
+const twListMsg = ref('')
+const twProgress = ref('')
+const twMode = ref<'merge' | 'import'>('merge')
+
+/**
+ * 划线的默认高亮色。
+ *
+ * 之前只能在划词菜单里右键色块设置 —— 藏得太深，没人找得到。
+ * 这里跟自定义色一起放出来，两边写的是同一个 localStorage 键。
+ */
+const HL_COLORS = [
+  { name: 'sand', hex: '#c9b287', label: '沙' },
+  { name: 'sage', hex: '#9ab094', label: '青' },
+  { name: 'mist', hex: '#94a8b8', label: '雾' },
+  { name: 'rose', hex: '#c49e9e', label: '绯' },
+  { name: 'lilac', hex: '#aaa0ba', label: '紫' },
+  { name: 'clay', hex: '#c49480', label: '陶' }
+]
+const defaultHl = ref(localStorage.getItem('lb-default-hl') || 'sand')
+watch(defaultHl, v => localStorage.setItem('lb-default-hl', v))
+
+/** 自定义色单独存，选了就盖过预设 */
+const customHl = ref(localStorage.getItem('lb-custom-hl') || '#c9b287')
+watch(customHl, v => {
+  localStorage.setItem('lb-custom-hl', v)
+  // 当场生效，不用刷新
+  document.documentElement.style.setProperty('--lb-custom-hl', v)
+  defaultHl.value = 'custom'
+})
+
+const showFixTools = ref(false)
+
+/** 对轴并发数。改完下次起任务生效，不用刷新。 */
+const alignConcurrency = ref(Number(localStorage.getItem('lb-align-concurrency')) || 1)
+watch(alignConcurrency, v => localStorage.setItem('lb-align-concurrency', String(v)))
+const probing = ref(false)
+const probeMsg = ref('')
+
+async function runProbe() {
+  probing.value = true
+  probeMsg.value = ''
+  try {
+    const { probeEnglishFixer } = await import('@/shared/core/transcriptClean')
+    const r = await probeEnglishFixer()
+    probeMsg.value = r.ok
+      ? `正常：模型把 "webling good" 改成了 → ${r.got}`
+      : `模型没改这句已知有错的样本，返回：${r.got}。说明它在敷衍，或者当前模型能力不够，换个模型试试。`
+  } catch (e) {
+    probeMsg.value = '测试失败：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    probing.value = false
+  }
+}
+const dbInfo = ref('')
+async function runInspect() {
+  dbInfo.value = '检查中…'
+  try {
+    dbInfo.value = await inspectDatabase()
+  } catch (e) {
+    dbInfo.value = '体检失败：' + (e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function runTwImport() {
+  const picked = twList.value.find((d: any) => d.url === twPicked.value)
+  if (!picked) return
+  twBusy.value = true
+  twMode.value = 'import'
+  twMsg.value = ''
+  twProgress.value = '下载词典…'
+  try {
+    const dict = await fetchTwDict(picked.language || 'en', picked.url)
+    const source = `TypeWords · ${picked.name}`
+    const items = dict.filter(w => w.word).map(w => twToWordItem(w, source))
+    twProgress.value = `写入 ${items.length} 词…`
+    const r = await wordStore.addWords(items as any)
+    // createGroup 收的是整个 WordGroup 对象，不是 (name, desc)
+    const now = new Date().toISOString()
+    /**
+     * 词表要收录这本词典的**全部**词，不只是这次新建的那些。
+     *
+     * 原来按 source 过滤，而库里已有的同名词 source 是别的来源，全被漏掉 ——
+     * 3575 个词的雅思库导进来，词表里只剩一百多个新词。
+     * 词库是总集合（同一个词只存一份），词表只是一个指向词条的清单，
+     * 两个概念不能混。
+     */
+    const want = new Set(dict.map(w => w.word.toLowerCase()).filter(Boolean))
+    const ids = wordStore.words.filter(w => want.has(w.word.toLowerCase())).map(w => w.id)
+    await wordStore.createGroup({
+      // 主页的「我的词表」只列 id 以 book- 开头的分组，所以前缀必须是 book-
+      id: `book-tw-${Date.now().toString(36)}`,
+      name: picked.name,
+      description: `导入自 ${source}`,
+      wordIds: ids,
+      createdAt: now,
+      updatedAt: now
+    } as any)
+    twMsg.value =
+      `《${picked.name}》：词表收录 ${ids.length} 词` +
+      `${r.successCount ? `，其中 ${r.successCount} 个是词库里原本没有的` : '，全部在词库里已有'}`
+  } catch (e) {
+    twMsg.value = `导入失败：${e instanceof Error ? e.message : '未知错误'}`
+  } finally {
+    twBusy.value = false
+    twProgress.value = ''
+  }
+}
+
+async function loadTwList() {
+  twBusy.value = true
+  twMsg.value = ''
+  try {
+    const list = await fetchTwDictList()
+    // 只要英文单词类词典
+    twList.value = list.filter((d: any) => d && d.url && (d.language || 'en') === 'en')
+    twPicked.value = twList.value[0]?.url || ''
+    twListMsg.value = `可用词典 ${twList.value.length} 本`
+  } catch (e) {
+    twListMsg.value = ''
+    twMsg.value = `列表加载失败：${e instanceof Error ? e.message : '未知错误'}（需要联网访问 files.typewords.cc）`
+  } finally {
+    twBusy.value = false
+  }
+}
+
+async function runTwMerge() {
+  const picked = twList.value.find((d: any) => d.url === twPicked.value)
+  if (!picked) return
+  twBusy.value = true
+  twMode.value = 'merge'
+  twMsg.value = ''
+  twProgress.value = '下载词典…'
+  try {
+    const dict = await fetchTwDict(picked.language || 'en', picked.url)
+    const byWord = new Map<string, any>()
+    for (const w of dict) if (w.word) byWord.set(w.word.toLowerCase(), w)
+
+    // 先看这本词典到底带不带例句/短语/近义词。TypeWords 的词典分两类：
+    // 「新概念」「四六级」这种带完整词条数据，而「场景词汇」这种只有词+释义。
+    // 不先报出来的话，用户看到「匹配 621 个补了 0 条」只会以为是坏了。
+    const has = { sentences: 0, phrases: 0, synos: 0, etymology: 0 }
+    for (const w of dict) {
+      if (w.sentences?.length) has.sentences++
+      if (w.phrases?.length) has.phrases++
+      if (w.synos?.length) has.synos++
+      if (w.etymology?.length) has.etymology++
+    }
+    if (!has.sentences && !has.phrases && !has.synos && !has.etymology) {
+      twMsg.value =
+        `《${picked.name}》共 ${dict.length} 词，但这本词典里**没有例句、短语、近义词**，` +
+        `只有单词和释义，所以没有可补的内容。\n` +
+        `带例句的通常是「新概念英语」「四六级」这类词书，场景词表一般只有词表本身。`
+      return
+    }
+
+    const all = wordStore.words
+    let touched = 0
+    let matched = 0
+    for (let i = 0; i < all.length; i++) {
+      if (i % 200 === 0) {
+        twProgress.value = `${i}/${all.length}`
+        await new Promise(r => setTimeout(r, 0))
+      }
+      const tw = byWord.get(all[i].word.toLowerCase())
+      if (!tw) continue
+      matched++
+      const patch = buildTwPatch(all[i], tw)
+      if (patch) {
+        await wordStore.updateWordFields(all[i].id, patch as any)
+        touched++
+      }
+    }
+    twMsg.value =
+      `《${picked.name}》${dict.length} 词：匹配上 ${matched} 个，补了 ${touched} 个词条。\n` +
+      `该词典带例句 ${has.sentences} 词 · 短语 ${has.phrases} · 近义词 ${has.synos} · 词源 ${has.etymology}。` +
+      (matched && !touched ? '\n补 0 条说明这些词的对应字段本来就已经有内容了（只补空缺，不覆盖）。' : '')
+  } catch (e) {
+    twMsg.value = `补全失败：${e instanceof Error ? e.message : '未知错误'}`
+  } finally {
+    twBusy.value = false
+    twProgress.value = ''
+  }
+}
 const backfilling = ref(false)
 const backfillDone = ref(0)
 const backfillTotal = ref(0)
@@ -863,6 +1147,19 @@ onMounted(async () => {
   font-size: 13px;
 }
 .mini-input { width: 120px; }
+.fix-toggle {
+  border: none; background: none; cursor: pointer;
+  color: var(--r-ink2, #9aa0a6); font-size: 13px; padding: 6px 0;
+  &:hover { color: var(--r-ink, #1f2328); }
+}
+.db-info {
+  margin: 10px 0 0; padding: 10px 12px; border-radius: 8px;
+  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #5b6570);
+  font: 12.5px/1.7 ui-monospace, Consolas, monospace; white-space: pre-wrap;
+}
+.dict-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.dict-bar .tw-select { flex: 1; min-width: 220px; }
+.tw-select { width: 100%; max-width: 420px; padding: 7px 10px; border: 1px solid var(--r-border, #e5e7eb); border-radius: 8px; background: var(--r-paper, #fff); color: var(--r-ink, #1f2328); }
 .msg {
   font-size: 12.5px;
   color: var(--r-accent, #8a4b3a);
@@ -976,4 +1273,23 @@ onMounted(async () => {
 .swatch-free input:hover { opacity: 1; }
 .file-btn { cursor: pointer; display: inline-flex; align-items: center; }
 .op-desc.warn { color: #b5493c; }
+.hl-picker { display: flex; gap: 7px; }
+.hl-dot {
+  width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, .12);
+}
+.hl-dot.on { box-shadow: 0 0 0 2px var(--r-paper, #fff), 0 0 0 3.5px var(--r-accent, #8a4b3a); }
+.hl-input { width: 46px; height: 28px; border: 1px solid var(--r-border, #e5e7eb); border-radius: 6px; cursor: pointer; }
+
+.rm-new { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rm-input {
+  flex: 1; min-width: 180px; padding: 6px 10px; font-family: inherit; font-size: 13px;
+  border: 1px solid var(--r-line, #e5e7eb); border-radius: 8px; background: transparent;
+  color: var(--r-ink, #1f2328);
+}
+.rm-num {
+  width: 64px; padding: 6px 8px; font-family: inherit; font-size: 13px;
+  border: 1px solid var(--r-line, #e5e7eb); border-radius: 8px; background: transparent;
+  color: var(--r-ink, #1f2328);
+}
 </style>

@@ -7,6 +7,16 @@ export interface AiSettings {
   apiKey: string
   baseUrl: string
   model: string
+  /**
+   * 长任务专用模型（整理转录稿、批量翻译这类）。
+   *
+   * 有些中转站**按模型的上下文窗口整个预扣费**，跟我们发多少 max_tokens 无关：
+   * 选了百万上下文的模型，一次请求就要预扣几百块，余额不够直接 403，
+   * 而同一个 key 跑短请求完全正常。
+   * 留一个单独的槽位，长任务换个小窗口的便宜模型，主模型不用动。
+   * 留空就用上面那个 model。
+   */
+  heavyModel?: string
 }
 
 const STORAGE_KEY = 'lb_ai_settings'
@@ -16,7 +26,8 @@ function defaults(): AiSettings {
     provider: 'anthropic',
     apiKey: '',
     baseUrl: 'https://api.anthropic.com',
-    model: 'claude-sonnet-4-5'
+    model: 'claude-sonnet-4-5',
+    heavyModel: ''
   }
 }
 
@@ -103,4 +114,9 @@ export function deleteProfile(name: string) {
 
 export function isAiConfigured(): boolean {
   return !!aiSettings.apiKey.trim()
+}
+
+/** 长任务该用哪个模型：设了专用的就用专用的，没设就用主模型 */
+export function modelForHeavyTask(): string {
+  return (aiSettings.heavyModel || '').trim() || aiSettings.model
 }

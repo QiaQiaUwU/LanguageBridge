@@ -38,8 +38,15 @@ export const useReaderStore = defineStore('reader', () => {
     article.updatedAt = new Date().toISOString()
     await wordDB.saveArticle(JSON.parse(JSON.stringify(article)))
     const idx = articles.value.findIndex(a => a.id === article.id)
-    if (idx >= 0) Object.assign(articles.value[idx], article)
-    else articles.value.unshift(article)
+    /**
+     * 整个替换，不用 Object.assign。
+     *
+     * Object.assign 是就地合并：整理之后句子数变少、或者某些字段被删掉时，
+     * 旧值会留在对象上，界面看到的还是老样子 —— "重新整理完打开还是原样"
+     * 就是这么来的。
+     */
+    if (idx >= 0) articles.value[idx] = { ...article }
+    else articles.value.unshift({ ...article })
     trackSync('beSaveArticle', be.beSaveArticle(article))
   }
 
@@ -71,6 +78,16 @@ export const useReaderStore = defineStore('reader', () => {
     return group
   }
 
+  /** 改分组的任意字段（书的章节顺序、读到第几章都走这里） */
+  async function updateGroup(id: string, patch: Partial<ArticleGroup>) {
+    const g = groups.value.find(x => x.id === id)
+    if (!g) return
+    Object.assign(g, patch)
+    g.updatedAt = new Date().toISOString()
+    await wordDB.saveArticleGroup(JSON.parse(JSON.stringify(g)))
+    trackSync('beSaveArticleGroup', be.beSaveArticleGroup(g))
+  }
+
   async function renameGroup(id: string, name: string) {
     const g = groups.value.find(x => x.id === id)
     if (!g) return
@@ -86,14 +103,40 @@ export const useReaderStore = defineStore('reader', () => {
       .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
   }
 
-  function getBookNote(groupId: string, page: number): string {
-    const g = groups.value.find(x => x.id === groupId)
+  /**
+   * 书的分章笔记。
+   *
+   * key 有两种来源，必须都认：
+   *  - 新模型：书本身是一条 isBook 的文章，key 是那条文章的 id
+   *  - 旧模型：书 = 一个分组，key 是分组 id
+   *
+   * 原来只按分组查，`groups.find(...)` 找不到就直接 return ——
+   * 新模型下笔记从来没被保存过，而且一声不吭。
+   */
+  function getBookNote(key: string, page: number): string {
+    const book = articles.value.find(a => a.id === key && a.isBook)
+    if (book) return book.chapterNotes?.[page] ?? ''
+    const g = groups.value.find(x => x.id === key)
     return g?.bookNotes?.[page] ?? ''
   }
 
-  async function saveBookNote(groupId: string, page: number, html: string) {
-    const g = groups.value.find(x => x.id === groupId)
-    if (!g) return
+  async function saveBookNote(key: string, page: number, html: string) {
+    // 新模型：存在书那条文章记录上
+    const book = articles.value.find(a => a.id === key && a.isBook)
+    if (book) {
+      const notes = [...(book.chapterNotes || [])]
+      while (notes.length <= page) notes.push('')
+      notes[page] = html
+      await saveArticle({ ...book, chapterNotes: notes })
+      return
+    }
+
+    // 旧模型：存在分组上
+    const g = groups.value.find(x => x.id === key)
+    if (!g) {
+      console.warn('[笔记] 找不到这本书，笔记没保存：', key)
+      return
+    }
     const notes = [...(g.bookNotes || [])]
     while (notes.length <= page) notes.push('')
     notes[page] = html
@@ -167,6 +210,7 @@ export const useReaderStore = defineStore('reader', () => {
     deleteArticles,
     selectArticle,
     createGroup,
+    updateGroup,
     articlesOfGroup,
     getBookNote,
     saveBookNote,

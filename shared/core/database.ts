@@ -13,6 +13,50 @@ let sharedConn: Promise<IDBPDatabase<any>> | null = null
 /** 正在跑版本升级。升级期间不能因为 blocking 回调把自己关掉。 */
 let upgrading = false
 
+/** 读整表时跳过的坏记录数，供界面提示用 */
+export const salvageReport = { skipped: 0, lastStore: '' }
+
+/**
+ * 逐条读整张表，坏记录跳过。
+ *
+ * db.getAll() 是一次性读整个 objectStore：只要里面有一条记录的底层文件损坏
+ * （NotReadableError: Data lost due to missing file），整张表就全读不出来，
+ * 表现是「明明只坏了一条，结果一条都读不到」。用游标逐条走，坏的那条跳过，
+ * 其余照常返回 —— 至少能把还完好的数据救出来。
+ */
+async function salvageAll(db: IDBPDatabase<any>, store: string): Promise<any[]> {
+  const out: any[] = []
+  let skipped = 0
+  try {
+    let cursor = await db.transaction(store, 'readonly').store.openCursor()
+    while (cursor) {
+      try {
+        out.push(cursor.value)
+      } catch {
+        skipped++
+      }
+      try {
+        cursor = await cursor.continue()
+      } catch {
+        // 游标本身崩了就只能到此为止，前面读到的仍然有效
+        skipped++
+        break
+      }
+    }
+  } catch (err) {
+    // 连事务都开不起来，退回一次性读，让上层拿到原始错误
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!/NotReadableError|missing file|backing store/i.test(msg)) throw err
+    skipped++
+  }
+  if (skipped) {
+    salvageReport.skipped += skipped
+    salvageReport.lastStore = store
+    console.warn(`[DB] ${store} 有 ${skipped} 条记录读不出来，已跳过`)
+  }
+  return out
+}
+
 function plain<T>(v: T): T {
   return v == null ? v : (JSON.parse(JSON.stringify(v)) as T)
 }
@@ -34,25 +78,86 @@ export class WordDatabase {
     this.dbVersion = 7
   }
 
+  get expectedVersion(): number {
+    return this.dbVersion
+  }
+
   async open(): Promise<IDBPDatabase<any>> {
     if (sharedConn) return sharedConn
-    sharedConn = this.doOpen()
+    const chain = this.dropEmptyShell().then(() => this.doOpen())
       .catch(async err => {
         const msg = err instanceof Error ? err.message : String(err)
-        // versionchange 事务被别的连接顶掉。等对方释放后重试一次通常就成了；
-        // 直接把错抛给调用方会让整批写入白跑。
-        if (/Version change transaction was aborted|AbortError/i.test(msg)) {
-          await new Promise(r => setTimeout(r, 400))
-          return this.doOpen()
+        if (!/Version change transaction was aborted|AbortError/i.test(msg)) throw err
+
+        /**
+         * versionchange 事务被打断，退避重试。
+         *
+         * 这里**不能**退回 openDB(name) 不带版本号 —— 库不存在时那样会新建一个
+         * 空库、一张表都没有，接着所有读写全废。我上一版就是这么写的，直接把
+         * 用户的库换成了空壳。
+         *
+         * 正确做法：带着版本号重试几次；仍然失败就把真实状态报出来让人处理，
+         * 绝不自己造一个空库顶上。
+         */
+        for (let i = 0; i < 3; i++) {
+          await new Promise(r => setTimeout(r, 300 * (i + 1)))
+          try {
+            return await this.doOpen()
+          } catch (e2) {
+            const m2 = e2 instanceof Error ? e2.message : String(e2)
+            if (!/Version change transaction was aborted|AbortError/i.test(m2)) throw e2
+          }
         }
-        throw err
+
+        let detail = ''
+        try {
+          const list = await (indexedDB as any).databases?.()
+          const me = Array.isArray(list) ? list.find((d: any) => d.name === this.dbName) : null
+          detail = me ? `（本地库当前 v${me.version}，程序需要 v${this.dbVersion}）` : '（本地还没有这个库）'
+        } catch {
+          /* Firefox 没有 databases()，取不到就不报 */
+        }
+        throw new Error(
+          `数据库升级被打断，重试 3 次仍未成功${detail}。\n` +
+          `最常见的原因是同时开了两个 LanguageBridge 窗口：请把所有窗口和浏览器标签全部关掉，只留一个再打开。`
+        )
       })
       .catch(err => {
-      // 打开失败要把缓存清掉，否则这条失败的 promise 会被后续所有调用复用
-      sharedConn = null
-      throw err
-    })
-    return sharedConn
+        // 打开失败要把缓存清掉，否则这条失败的 promise 会被后续所有调用复用
+        sharedConn = null
+        throw err
+      })
+    sharedConn = chain
+    // 给缓存的这份挂一个空 catch。调用方 await 的是同一条链、错误照常抛给它；
+    // 但如果某次调用是即发即忘（没人 await），这个 promise 就会变成
+    // 「未捕获的 Promise: AbortError」浮到全局。挂上之后只有真正 await 的人会看到。
+    void chain.catch(() => {})
+    return chain
+  }
+
+  /**
+   * 打开前先探一眼：如果本地库存在、版本低于程序期望、而且**一张表都没有**，
+   * 那它一定是个空壳（我之前一版错误地用 openDB(name) 不带版本号打开，
+   * 库不存在时会新建这样一个 v1 空库）。空壳里没有任何数据，直接删掉重建，
+   * 比反复尝试升级它可靠得多。有表的库绝不碰。
+   */
+  private async dropEmptyShell(): Promise<void> {
+    try {
+      const probe = await openDB<any>(this.dbName)
+      const empty = probe.objectStoreNames.length === 0
+      const older = probe.version < this.dbVersion
+      probe.close()
+      if (!empty || !older) return
+      console.warn(`[DB] 发现 v${probe.version} 空库（0 张表），删除后重建`)
+      await new Promise<void>((resolve, reject) => {
+        const req = indexedDB.deleteDatabase(this.dbName)
+        req.onsuccess = () => resolve()
+        req.onerror = () => reject(req.error)
+        req.onblocked = () => resolve() // 被占也继续，后面的 openDB 会再试
+      })
+    } catch {
+      /* 探测失败就当没这回事，走正常打开流程 */
+    }
   }
 
   private doOpen(): Promise<IDBPDatabase<any>> {
@@ -60,7 +165,14 @@ export class WordDatabase {
     return openDB<any>(this.dbName, this.dbVersion, {
       upgrade(db, oldVersion, newVersion, transaction) {
         upgrading = true
-        transaction.done.finally(() => { upgrading = false })
+        // 用 then 的两个回调收尾，不能用 .finally —— finally 不吞异常，
+        // versionchange 事务中止时 transaction.done 会 reject，
+        // 这条链上没有 catch，就变成「未捕获的 Promise: AbortError」。
+        // 这个标志纯粹是内部状态，事务成败都只需要把它复位。
+        transaction.done.then(
+          () => { upgrading = false },
+          () => { upgrading = false }
+        )
         console.log(`DB upgrade: ${oldVersion} → ${newVersion}`)
 
         if (!db.objectStoreNames.contains('words')) {
@@ -149,7 +261,7 @@ export class WordDatabase {
 
   async getAllWords(limit?: number, offset?: number): Promise<any[]> {
     const db = await this.open()
-    const allWords = await db.getAll('words')
+    const allWords = await salvageAll(db, 'words')
 
     if (limit !== undefined) {
       return allWords.slice(offset || 0, (offset || 0) + limit)
@@ -159,7 +271,7 @@ export class WordDatabase {
 
   async searchWords(query: string): Promise<any[]> {
     const db = await this.open()
-    const allWords = await db.getAll('words')
+    const allWords = await salvageAll(db, 'words')
     const q = query.toLowerCase()
 
     return allWords.filter(word =>
@@ -201,7 +313,7 @@ export class WordDatabase {
 
   async getWordsToReview(): Promise<any[]> {
     const db = await this.open()
-    const allWords = await db.getAll('words')
+    const allWords = await salvageAll(db, 'words')
     const now = new Date()
 
     return allWords.filter(word => {
@@ -222,7 +334,7 @@ export class WordDatabase {
 
   async getAllGroups(): Promise<any[]> {
     const db = await this.open()
-    return await db.getAll('groups')
+    return await salvageAll(db, 'groups')
   }
 
   async deleteGroup(id: string): Promise<void> {
@@ -241,7 +353,7 @@ export class WordDatabase {
 
   async getAllWrongBook(): Promise<any[]> {
     const db = await this.open()
-    return await db.getAll('wrongBook')
+    return await salvageAll(db, 'wrongBook')
   }
 
   async removeFromWrongBook(wordId: string): Promise<void> {
@@ -268,7 +380,7 @@ export class WordDatabase {
 
   async getAllArticles(): Promise<any[]> {
     const db = await this.open()
-    const all = await db.getAll('articles')
+    const all = await salvageAll(db, 'articles')
     return all.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
   }
 
@@ -289,7 +401,7 @@ export class WordDatabase {
 
   async getAllActivity(): Promise<any[]> {
     const db = await this.open()
-    return await db.getAll('activity')
+    return await salvageAll(db, 'activity')
   }
 
   async saveHandle(key: string, handle: unknown): Promise<void> {
@@ -315,7 +427,7 @@ export class WordDatabase {
 
   async getAllTodos(): Promise<any[]> {
     const db = await this.open()
-    return await db.getAll('todos')
+    return await salvageAll(db, 'todos')
   }
 
   async updateTodo(id: number, patch: any): Promise<void> {
@@ -337,7 +449,7 @@ export class WordDatabase {
 
   async getAllHabits(): Promise<any[]> {
     const db = await this.open()
-    return await db.getAll('habits')
+    return await salvageAll(db, 'habits')
   }
 
   async updateHabit(id: number, patch: any): Promise<void> {
@@ -380,7 +492,7 @@ export class WordDatabase {
 
   async getAllArticleGroups(): Promise<any[]> {
     const db = await this.open()
-    return await db.getAll('articleGroups')
+    return await salvageAll(db, 'articleGroups')
   }
 
   async deleteArticleGroup(id: string): Promise<void> {
@@ -401,6 +513,57 @@ export class WordDatabase {
       return false
     }
   }
+}
+
+/**
+ * 关闭并删除整个本地数据库。
+ *
+ * 底层文件损坏时（NotReadableError）没有任何修复手段，只能重建。删之前一定
+ * 先导出还能读的部分 —— salvageAll 已经能跳过坏记录把其余捞出来。
+ */
+/**
+ * 数据库体检。出问题时先看这个，别猜。
+ * 报告实际版本、代码期望版本、缺哪些表、开了几个连接。
+ */
+export async function inspectDatabase(): Promise<string> {
+  const lines: string[] = []
+  try {
+    const db = await openDB<any>('LanguageBridgeDB')
+    lines.push(`实际版本 v${db.version}，代码期望 v${wordDB.expectedVersion}`)
+    const have = Array.from(db.objectStoreNames)
+    lines.push(`数据表 ${have.length} 个：${have.join('、')}`)
+    const need = ['words', 'groups', 'articles', 'articleGroups', 'wrongBook', 'activity', 'todos', 'habits', 'habitLog', 'handles']
+    const missing = need.filter(n => !have.includes(n))
+    lines.push(missing.length ? `缺少：${missing.join('、')}` : '没有缺表')
+    for (const st of have) {
+      try {
+        lines.push(`  ${st}: ${await db.count(st)} 条`)
+      } catch (e) {
+        lines.push(`  ${st}: 读取失败 ${e instanceof Error ? e.message : ''}`)
+      }
+    }
+    db.close()
+  } catch (e) {
+    lines.push(`打开失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+  return lines.join('\n')
+}
+
+export async function resetLocalDatabase(): Promise<void> {
+  try {
+    const db = await sharedConn
+    db?.close()
+  } catch {
+    /* 连不上就直接删 */
+  }
+  sharedConn = null
+  await new Promise<void>((resolve, reject) => {
+    const req = indexedDB.deleteDatabase('LanguageBridgeDB')
+    req.onsuccess = () => resolve()
+    req.onerror = () => reject(req.error)
+    // 有别的标签页占着时会 blocked，提示用户关掉
+    req.onblocked = () => reject(new Error('还有别的窗口开着这个应用，请全部关掉后重试'))
+  })
 }
 
 export const wordDB = new WordDatabase()

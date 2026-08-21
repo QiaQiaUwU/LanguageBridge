@@ -1,9 +1,9 @@
-ï»¿@echo off
-chcp 65001 >nul
+@echo off
+chcp 936 >nul
 title LanguageBridge - Close this window to stop
 cd /d "%~dp0"
-echo æç¤ºï¼šä»¥åå¯ä»¥æ”¹ç”¨ LanguageBridge.vbsï¼ˆåŒä¸€ä¸ªæ–‡ä»¶å¤¹é‡Œï¼‰æ‰“å¼€ï¼Œ
-echo é¦–æ¬¡è¿è¡Œä¼šè‡ªåŠ¨åœ¨æ¡Œé¢å»ºå¥½å›¾æ ‡ï¼Œæ—¥å¸¸å¯åŠ¨ä¸ä¼šå†å¼¹å‡ºè¿™ä¸ªé»‘çª—å£ã€‚
+echo ÌáÊ¾£ºÒÔºó¿ÉÒÔ¸ÄÓÃ LanguageBridge.vbs£¨Í¬Ò»¸öÎÄ¼ş¼ĞÀï£©´ò¿ª£¬
+echo Ê×´ÎÔËĞĞ»á×Ô¶¯ÔÚ×ÀÃæ½¨ºÃÍ¼±ê£¬ÈÕ³£Æô¶¯²»»áÔÙµ¯³öÕâ¸öºÚ´°¿Ú¡£
 echo.
 echo Starting LanguageBridge...
 echo (Dependency install / rebuild only happens automatically when something actually changed)

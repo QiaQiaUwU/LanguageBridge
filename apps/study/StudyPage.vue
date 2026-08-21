@@ -5,6 +5,20 @@
     <main class="study-body">
       <p v-if="isWrongRound" class="wrong-round-tip">错词重练 · 这一轮里打错过的词，全部答对才进下一阶段</p>
 
+      <!-- 上次没练完：问一句接着练还是重开 -->
+      <div v-if="pendingSnapshot" class="resume-mask">
+        <div class="resume-card">
+          <h3>上次没练完</h3>
+          <p class="resume-sub">
+            {{ stageNameOf(pendingSnapshot.stage) }} · 第 {{ pendingSnapshot.index + 1 }} 个
+          </p>
+          <div class="resume-acts">
+            <button class="dark-btn" @click="resumeSnapshot">接着练</button>
+            <button class="ghost-btn" @click="discardSnapshot">重新开始</button>
+          </div>
+        </div>
+      </div>
+
       <TypingCard
         v-if="currentWord"
         :key="currentWord.id + '-' + type"
@@ -19,6 +33,7 @@
         @wrong="onWrong"
         @know="onKnow"
         @mastered="onMastered"
+        @skip="onSkip"
       />
 
       <div v-if="scenarioPrompt.length" class="scen-mask">
@@ -45,6 +60,32 @@
           <div class="settle-card"><span class="num">{{ reviewCount }}</span><span class="lbl">复习</span></div>
         </div>
 
+        <div class="settle-cols">
+          <div class="week-box">
+            <span class="box-title">本周</span>
+            <div class="week-row">
+              <span
+                v-for="(d, i) in weekDays"
+                :key="d.date"
+                class="week-cell"
+                :class="{ on: d.active, today: d.isToday }"
+              >{{ WEEK_LABELS[i] }}</span>
+            </div>
+          </div>
+
+          <div v-if="dictProgress.total" class="prog-box">
+            <div class="prog-head">
+              <span class="box-title">{{ scopeLabel || '词表进度' }}</span>
+              <span class="prog-pct">{{ dictProgress.percent }}%</span>
+            </div>
+            <div class="prog-bar"><i :style="{ width: dictProgress.percent + '%' }"></i></div>
+            <div class="prog-foot">
+              <span>已学 {{ dictProgress.learned }}</span>
+              <span>共 {{ dictProgress.total }}</span>
+            </div>
+          </div>
+        </div>
+
         <div v-if="wrongSummary.length" class="wrong-summary">
           <h3>错词统计</h3>
           <ul>
@@ -62,10 +103,12 @@
         </div>
       </div>
 
-      <p v-if="!currentWord && !finished && !scenarioPrompt.length" class="empty">没有可学的词，去词汇中心导入词书，或调大每日学习量。</p>
+      <!-- pendingSnapshot 期间 currentList 还没填，别在续练框后面露出「没有可学的词」 -->
+      <p v-if="!currentWord && !finished && !scenarioPrompt.length && !pendingSnapshot" class="empty">没有可学的词，去词汇中心导入词书，或调大每日学习量。</p>
     </main>
 
-    <aside class="wordlist-panel" :class="{ open: showPanel }" @click.self="showPanel = false">
+    <div class="panel-wrap" :class="{ 'has-panel': showPanel }" @click.self="showPanel = false">
+      <aside v-show="showPanel" class="wordlist-panel">
       <div class="wl-body">
         <div class="wl-title">
           <span>{{ scopeLabel || '本轮词表' }}</span>
@@ -84,7 +127,8 @@
           </div>
         </div>
       </div>
-    </aside>
+      </aside>
+    </div>
 
     <div class="footer-wrap" :class="{ hide: !showToolbar }">
       <button class="fold-arrow" :title="showToolbar ? '收起' : '展开'" @click="showToolbar = !showToolbar">
@@ -167,7 +211,9 @@ import { readScope, wordsOfScope, groupOfScope } from '@/shared/core/studyScope'
 import { getScopeProgress, saveScopeProgress, scopeKeyOfTag } from '@/shared/core/scopeProgress'
 import { loadFsrsData, applyGrade, getGradeByWrongTimes, flushFsrsData, forgetWord, Rating } from '@/shared/core/fsrs'
 import { loadMasteredWords, getIgnoreSet, addMastered, getMasteredSet } from '@/shared/core/masteredWords'
-import { recordReview, recordWordsLearned, recordActiveMinute } from '@/shared/core/activityLog'
+import { recordReview, recordWordsLearned, getWeekActivity } from '@/shared/core/activityLog'
+import { saveSnapshot, readSnapshot, clearSnapshot, snapshotUsable, type PracticeSnapshot } from '@/shared/core/practiceSnapshot'
+import { startStudyClock, stopStudyClock } from '@/shared/core/studyClock'
 
 const router = useRouter()
 const route = useRoute()
@@ -185,6 +231,9 @@ const stageList = computed<PracticeStage[]>(() => MODE_STAGES[modeParam.value as
 const stage = ref<PracticeStage>('followWriteNew')
 const stageIndex = computed(() => stageList.value.indexOf(stage.value))
 const stageName = computed(() => STAGE_NAMES[stage.value] || '')
+function stageNameOf(s: string): string {
+  return STAGE_NAMES[s as PracticeStage] || s
+}
 
 const type = ref<PracticeType>('followWrite')
 
@@ -192,7 +241,7 @@ const taskNew = ref<WordItem[]>([])
 const taskReview = ref<WordItem[]>([])
 const currentList = ref<WordItem[]>([])
 const index = ref(0)
-const showPanel = ref(localStorage.getItem('lb-study-panel') === '1')
+const showPanel = ref(localStorage.getItem('lb-study-panel') !== '0')
 watch(showPanel, v => localStorage.setItem('lb-study-panel', v ? '1' : '0'))
 const showToolbar = ref(localStorage.getItem('lb-study-toolbar') !== '0')
 watch(showToolbar, v => localStorage.setItem('lb-study-toolbar', v ? '1' : '0'))
@@ -200,7 +249,7 @@ const showTranslate = ref(getStudySettings().showTranslate)
 watch(showTranslate, v => saveStudySettings({ showTranslate: v }))
 const hideWord = ref(false)
 function speakCurrent() {
-  if (currentWord.value) playWord(currentWord.value.word, 'us', getStudySettings().wordSoundSpeed)
+  if (currentWord.value) playWord(currentWord.value.word, getStudySettings().soundType || 'us', getStudySettings().wordSoundSpeed)
 }
 const stageFillPct = computed(() =>
   currentList.value.length ? `${Math.round((index.value / currentList.value.length) * 100)}%` : '0%'
@@ -216,7 +265,17 @@ const excludeWords = ref<Set<string>>(new Set())
 
 const newCount = ref(0)
 const reviewCount = ref(0)
-const totalWrong = computed(() => Object.keys(wrongTimesMap.value).length)
+/**
+ * 错词数 = 真的错过的词。
+ *
+ * 原来是 Object.keys(wrongTimesMap).length —— 而 onComplete 每打完一个词
+ * 都会写一条 `wrongTimesMap[key] = 0`（那条记录是给结算时 FSRS 评级和
+ * 自动标状态用的，必须保留），于是每学一个词错误数就 +1，正确率也跟着掉。
+ * 判断改成按值筛，记录照旧写。
+ */
+const totalWrong = computed(() =>
+  Object.values(wrongTimesMap.value).filter(n => Number(n) > 0).length
+)
 
 const prevWordText = computed(() => currentList.value[index.value - 1]?.word || '')
 const nextWordText = computed(() => currentList.value[index.value + 1]?.word || '')
@@ -251,7 +310,7 @@ function tick() {
   const now = Date.now()
   if (now - lastKeyAt > IDLE_LIMIT) { pauseTimer(); return }
   if (segments.value.length) segments.value[segments.value.length - 1][1] = now
-  if (Math.floor(spend.value / 60000) !== Math.floor((spend.value - 1000) / 60000)) recordActiveMinute()
+  // 记账交给 studyClock，这里的 segments 只用来在界面上显示本轮分钟数
 }
 function onAnyKey() {
   lastKeyAt = Date.now()
@@ -270,6 +329,7 @@ const accuracy = computed(() => {
 const wrongSummary = computed<{ word: string; times: number }[]>(() =>
   Object.entries(wrongTimesMap.value)
     .map(([word, times]) => ({ word, times: Number(times) }))
+    .filter(x => x.times > 0)   // 0 次的那些是「打对了」，不该出现在错词统计里
     .sort((a, b) => b.times - a.times)
 )
 
@@ -295,12 +355,115 @@ async function init() {
   newCount.value = task.newWords.length
   reviewCount.value = task.reviewWords.length
 
+  /**
+   * 断点。快照是今天的、同一批词，才问用户要不要接着练；
+   * 隔夜的直接把上次的成绩结算掉再丢弃，不然那批词永远进不了 FSRS。
+   */
+  const snap = readSnapshot()
+  if (snap && snap.scopeKey === scopeKey.value && !snapshotUsable(snap, scopeKey.value)) {
+    settleSnapshot(snap)
+    clearSnapshot()
+  } else if (snapshotUsable(snap, scopeKey.value)) {
+    pendingSnapshot.value = snap
+    return   // 等用户选「接着练」还是「重新开始」
+  }
+
   stage.value = stageList.value[0]
   enterStage(stage.value, true)
 }
 
+/* ---------- 断点续练 ---------- */
+
+const scopeKey = computed(() => {
+  const scope = readScope(route.query as Record<string, any>)
+  if (scope.kind === 'group' && scope.groupId) return `group:${scope.groupId}`
+  if (scope.kind === 'tag' && scope.tag) return scopeKeyOfTag(scope.tag)
+  if (scope.kind === 'adhoc') return `adhoc:${scope.label || ''}`
+  return 'all'
+})
+
+const pendingSnapshot = ref<PracticeSnapshot | null>(null)
+
+function wordsByNames(names: string[]): WordItem[] {
+  const byName = new Map(wordStore.words.map(w => [w.word.toLowerCase(), w]))
+  return names.map(n => byName.get(n.toLowerCase())).filter(Boolean) as WordItem[]
+}
+
+/** 把一份快照里已经练出来的成绩落进 FSRS 和状态标记（跟 complete 里那段同一个口径） */
+function settleSnapshot(snap: PracticeSnapshot) {
+  const times = snap.wrongTimesMap || {}
+  if (!Object.keys(times).length) return
+  for (const [word, n] of Object.entries(times)) {
+    const manual = snap.ratingMap?.[word]
+    applyGrade(word, (manual !== undefined ? manual : getGradeByWrongTimes(Number(n))) as any)
+  }
+  flushFsrsData()
+}
+
+function resumeSnapshot() {
+  const snap = pendingSnapshot.value
+  if (!snap) return
+  pendingSnapshot.value = null
+
+  taskNew.value = wordsByNames(snap.taskNewWords)
+  taskReview.value = wordsByNames(snap.taskReviewWords)
+  newCount.value = snap.newCount
+  reviewCount.value = snap.reviewCount
+  wrongTimesMap.value = { ...snap.wrongTimesMap }
+  ratingMap.value = { ...snap.ratingMap }
+  excludeWords.value = new Set(snap.excludeWords || [])
+  wrongWords.value = wordsByNames(snap.wrongWords || [])
+  isWrongRound.value = !!snap.isWrongRound
+  segments.value = Array.isArray(snap.segments) ? snap.segments : []
+
+  stage.value = snap.stage as PracticeStage
+  type.value = snap.type as PracticeType
+  currentList.value = wordsByNames(snap.listWords)
+  index.value = Math.min(Math.max(0, snap.index), Math.max(0, currentList.value.length - 1))
+  if (!currentList.value.length) {
+    // 词被删了之类的极端情况，退回正常开局
+    stage.value = stageList.value[0]
+    enterStage(stage.value, true)
+  }
+}
+
+function discardSnapshot() {
+  const snap = pendingSnapshot.value
+  pendingSnapshot.value = null
+  if (snap) settleSnapshot(snap)   // 上次练出来的成绩先落库，再重开
+  clearSnapshot()
+  stage.value = stageList.value[0]
+  enterStage(stage.value, true)
+}
+
+/** 把当前进度写成快照。中途退出时调一次就够，不用一直存 */
+function snapshotNow() {
+  if (settled) return
+  if (!currentList.value.length && !Object.keys(wrongTimesMap.value).length) return
+  saveSnapshot({
+    scopeKey: scopeKey.value,
+    stage: stage.value,
+    type: type.value,
+    index: index.value,
+    listWords: currentList.value.map(w => w.word),
+    taskNewWords: taskNew.value.map(w => w.word),
+    taskReviewWords: taskReview.value.map(w => w.word),
+    newCount: newCount.value,
+    reviewCount: reviewCount.value,
+    wrongTimesMap: { ...wrongTimesMap.value },
+    ratingMap: { ...ratingMap.value },
+    excludeWords: [...excludeWords.value],
+    wrongWords: wrongWords.value.map(w => w.word),
+    isWrongRound: isWrongRound.value,
+    segments: segments.value.map(x => [...x] as [number, number])
+  })
+}
+
 function wordsForStage(s: PracticeStage): WordItem[] {
-  const list = isReviewStage(s) ? taskReview.value : taskNew.value
+  // 随机复习：新词旧词混在一起（上游 Shuffle 模式就是不分新旧）
+  const list = s === 'shuffle'
+    ? [...taskNew.value, ...taskReview.value]
+    : isReviewStage(s) ? taskReview.value : taskNew.value
   return list.filter(w => !excludeWords.value.has(w.word.toLowerCase()))
 }
 
@@ -351,16 +514,16 @@ function groupLoop() {
   }
 }
 
+/**
+ * 按错一个键。
+ *
+ * 这里**只计数**，不记账。
+ * 原来每按错一次就立刻 recordReview(false) 并把词推进错词本 ——
+ * 敲错一个字母之后又改回来、最终完整敲对了，这个词照样算错，
+ * FSRS 也已经吃到一次「失败」。判定该在整个词敲完时下，不是每一次击键。
+ */
 function onWrong() {
   curWrong.value++
-  const w = currentWord.value
-  if (!w) return
-  const key = w.word.toLowerCase()
-  excludeWords.value.delete(key)
-  if (!wrongWords.value.find(x => x.word.toLowerCase() === key)) {
-    wrongWords.value.push(w)
-  }
-  recordReview(false)
 }
 
 function onKnow() {
@@ -369,6 +532,18 @@ function onKnow() {
   ratingMap.value[w.word.toLowerCase()] = Rating.Good as unknown as number
   excludeWords.value.add(w.word.toLowerCase())
   wordStore.setWordStatus(w.id, 'known')
+}
+
+/**
+ * 跳过。照上游 skip()：addExcludeWord() + next(false)。
+ * **不记错、不进错词本、不动 FSRS**，只是把这个词从这一轮里排除掉。
+ */
+function onSkip() {
+  const w = currentWord.value
+  if (!w) return
+  excludeWords.value.add(w.word.toLowerCase())
+  curWrong.value = 0
+  advance()
 }
 
 function onMastered() {
@@ -392,7 +567,28 @@ function onComplete() {
     }
     wrongTimesMap.value[key] = (wrongTimesMap.value[key] || 0) + curWrong.value
     if (!recentWords.value.some(x => x.id === w.id)) recentWords.value.push(w)
-    if (curWrong.value === 0) recordReview(true)
+
+    /**
+     * 整个词敲完了才下判定，一个词只记一次账。
+     * 中途错过就算错（进错词本、FSRS 记失败），全程没错才算对。
+     */
+    if (curWrong.value === 0) {
+      recordReview(true)
+      // 这一轮打对了就从错词本里撤掉（跟听写那边同一个口径）
+      wordStore.markWrongBook(w.id, true)
+    } else {
+      excludeWords.value.delete(key)
+      if (!wrongWords.value.find(x => x.word.toLowerCase() === key)) {
+        wrongWords.value.push(w)
+      }
+      recordReview(false)
+      /**
+       * 打字流程原来只做了「本轮错词重练」和 FSRS 评级，**没有写错词本** ——
+       * 所以在这里打错的词，错词本页面永远看不到，只有听写和单词测试能进去。
+       * 复习排期仍然走 FSRS（complete 里的 applyGrade），这里只登记错词本。
+       */
+      wordStore.markWrongBook(w.id, false)
+    }
   }
   curWrong.value = 0
 
@@ -480,6 +676,36 @@ function skipStage() {
 }
 
 let settled = false
+/* ---------- 结算页：本周记录 + 词表进度 ---------- */
+
+const WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日']
+const weekDays = ref<{ date: string; active: boolean; isToday: boolean }[]>([])
+
+/** 这一轮练的是哪个词表、学到第几个 */
+const dictProgress = ref({ learned: 0, total: 0, percent: 0 })
+
+async function loadSettleStats() {
+  weekDays.value = await getWeekActivity()
+
+  const group = wordStore.groups.find(g => g.id === groupId.value)
+  if (group) {
+    const ids = new Set(group.wordIds)
+    const total = wordStore.words.filter(w => ids.has(w.id)).length
+    const learned = Math.min(group.lastLearnIndex || 0, total)
+    dictProgress.value = { learned, total, percent: total ? Math.round((learned / total) * 100) : 0 }
+    return
+  }
+  const scope = readScope(route.query as Record<string, any>)
+  if (scope.kind === 'tag' && scope.tag) {
+    const cur = getScopeProgress(scopeKeyOfTag(scope.tag))
+    const total = taskNew.value.length + taskReview.value.length + (cur.lastLearnIndex || 0)
+    const learned = Math.min(cur.lastLearnIndex || 0, total)
+    dictProgress.value = { learned, total, percent: total ? Math.round((learned / total) * 100) : 0 }
+    return
+  }
+  dictProgress.value = { learned: 0, total: 0, percent: 0 }
+}
+
 async function complete() {
   if (settled) return
   settled = true
@@ -537,6 +763,9 @@ async function complete() {
     }
   }
   await recordWordsLearned(newCount.value)
+  clearSnapshot()   // 正常练完，断点就没用了
+  // 放在最后：上面刚写完 lastLearnIndex 和今天的活动记录，这时读到的才是新的
+  await loadSettleStats()
 }
 
 function restart() {
@@ -557,20 +786,70 @@ watch(currentWord, w => { if (w) curWrong.value = 0 })
 onMounted(() => {
   init()
   resumeTimer()
+  startStudyClock()
+  window.addEventListener('beforeunload', snapshotNow)
   tickTimer = setInterval(tick, 1000)
   window.addEventListener('keydown', onAnyKey)
   document.addEventListener('visibilitychange', onVisibility)
 })
 onUnmounted(() => {
+  stopStudyClock()
   if (tickTimer) clearInterval(tickTimer)
   window.removeEventListener('keydown', onAnyKey)
   document.removeEventListener('visibilitychange', onVisibility)
-  if (!settled && Object.keys(wrongTimesMap.value).length) flushFsrsData()
+  window.removeEventListener('beforeunload', snapshotNow)
+  /**
+   * 中途离开：存断点。
+   * 原来这里是 `flushFsrsData()` —— 但这一轮的 applyGrade 全在 complete() 里，
+   * 没评过级，flush 只是把旧数据原样写回去，等于什么都没保住。
+   */
+  snapshotNow()
 })
 </script>
 
 <style scoped lang="scss">
-.study-page { max-width: 900px; margin: 0 auto; padding: 16px 20px 150px; position: relative; }
+/* 尺寸取自 TypeWords 的 main.scss：
+     --toolbar-width: 50rem   中间练习区
+     --panel-width:   24rem   右侧词表
+   它的 .practice-wrapper 是 w-full h-full flex justify-center，
+   练习区固定 50rem 居中、右侧面板独立浮在旁边。我们原来是
+   max-width:900px 一条竖带，内容全挤在中间。 */
+/* 面板常驻时把可用宽度减掉面板，练习区在剩余空间里居中；
+   收起时练习区回到整幅居中。这就是它 --word-panel-margin-left 那个
+   calc 的效果，只是我们用 padding 表达，收放都不会盖住内容。 */
+/* 照 PracticeLayout.vue：练习区永远居中不动，面板独立 fixed，
+   靠 .has-panel 切显隐。面板上没有关闭按钮，用底栏那个图标切换
+   （它是 settingStore.showPanel = !settingStore.showPanel）。 */
+/* 练习区在 .app-main 的剩余空间里居中即可。
+   之前我用 calc(50vw + nav/2) 自己算中心点，而 --lb-nav-w 展开时是 178px、
+   收起才 56px，我到处写的兜底却是 56px —— 侧栏一展开中心点就偏，
+   内容看着永远挤在一边。这种居中根本不该自己算。 */
+.study-page {
+  --toolbar-width: 50rem;
+  --panel-width: 24rem;
+  --anim-time: .5s;
+  width: 100%;
+  /* 自己就是滚动容器，sticky 底栏才有参照；
+     高度撑满 .app-main 的可视区，多出来的内容在这里滚。 */
+  height: calc(100vh - var(--lb-main-pad, 24px) * 2);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  position: relative;
+}
+.study-body {
+  width: var(--toolbar-width);
+  max-width: 100%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding-top: 2.5rem;
+  /* 给固定底栏留出空间，否则最后一块内容被压在底栏下面滚不出来 */
+  padding-bottom: 14rem;
+}
 .quit-corner {
   position: fixed; left: calc(var(--lb-nav-w, 56px) + 14px); top: 14px; z-index: 30;
   width: 30px; height: 30px; border: none; border-radius: 8px;
@@ -578,13 +857,20 @@ onUnmounted(() => {
   font-size: 15px; cursor: pointer;
   &:hover { color: var(--r-ink, #1f2328); }
 }
-.study-body { min-height: 320px; }
 
+
+/* 底栏跟练习区同宽（它的 Footer 也是 width: var(--toolbar-width)） */
+/* 照它的 .footer-wrap：贴底、收起时 bottom: -6rem */
+/* 照它的 .footer-wrap：贴底、transition: all、收起 -6rem */
+/* sticky 而不是 fixed：水平方向自然跟着 .app-main 的可用宽度走，
+   不用去算 50vw + 侧栏宽；竖直方向照样钉在底部不随内容滚。 */
 .footer-wrap {
-  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-  width: min(660px, calc(100vw - var(--lb-nav-w, 56px) - 48px));
-  z-index: 20; transition: bottom .3s ease;
-  &.hide { bottom: -92px; }
+  position: sticky;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 0.6rem);
+  margin: auto auto 0;
+  width: min(var(--toolbar-width), 100%);
+  z-index: 999; transition: all var(--anim-time);
+  &.hide { margin-bottom: -6rem; }
 }
 .fold-arrow {
   position: absolute; left: 50%; top: -22px; transform: translateX(-50%);
@@ -620,20 +906,52 @@ onUnmounted(() => {
   &.on { color: var(--r-ink, #1f2328); background: var(--r-paper, #fff); }
 }
 
-.wordlist-panel {
-  position: fixed; right: 0; top: 0; bottom: 0; width: 300px;
-  transform: translateX(100%); transition: transform .28s ease;
-  z-index: 25;
-  &.open { transform: translateX(0); }
+/* 照 PracticeLayout.vue 的 .panel-wrap：
+     position: fixed; top: 0.8rem; height: calc(100vh - 1.8rem)
+   left 用它的 --word-panel-margin-left：
+     calc(50vw + aside/2 + toolbar/2 + 1rem)
+   —— 是常驻的第三栏，不是滑入抽屉。屏幕窄到放不下时才收起来。 */
+/* .panel-wrap 对应它的同名容器 */
+.panel-wrap {
+  position: fixed;
+  top: 0.8rem;
+  right: 0.8rem;
+  z-index: 1;
+  height: calc(100vh - 1.8rem);
+  width: var(--panel-width);
 }
+.wordlist-panel { width: 100%; height: 100%; }
+/* <1440px 变成全屏蒙版居中弹层，点背景关闭 */
+@media (max-width: 1439px) {
+  .panel-wrap {
+    top: 0; left: 0 !important; right: 0 !important; bottom: 0;
+    height: 100vh; z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 1rem; box-sizing: border-box;
+    pointer-events: none;
+    &.has-panel { background: rgba(0, 0, 0, 0.5); pointer-events: auto; }
+  }
+  .wordlist-panel { width: var(--panel-width); max-width: 100%; height: min(80vh, 100%); }
+}
+/* .wl-body 原来声明了两遍，中间还夹着一个 @media：
+   窄屏那条 border-radius: 0 被后面那遍的 12px 又盖回去了，等于没生效。
+   合成一份，@media 放到它后面。 */
 .wl-body {
   height: 100%; display: flex; flex-direction: column;
   background: var(--r-paper, #fff);
-  border-left: 1px solid var(--r-border, #e5e7eb);
+  border: 1px solid var(--r-border, #e5e7eb);
+  border-radius: 12px; overflow: hidden;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .07);
+}
+@media (max-width: 1200px) {
+  .study-page.with-panel { padding-right: 0; --panel-gap: 0px; }
+  .wordlist-panel { right: 0; top: 0; height: 100vh; width: var(--panel-width); z-index: 25; }
+  .wl-body { border-radius: 0; }
 }
 .wl-title {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 16px 16px 10px; font-size: 14px; color: var(--r-ink, #1f2328);
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px;
+  padding: 14px 14px 10px; font-size: 14px; color: var(--r-ink, #1f2328);
 }
 .wl-count { font-size: 12px; color: var(--r-ink2, #a0a6ad); }
 .wl-list { flex: 1; overflow: auto; padding: 0 8px 16px; }
@@ -670,6 +988,35 @@ onUnmounted(() => {
 }
 .settle-card .num { font-size: 22px; font-weight: 600; }
 .settle-card .lbl { font-size: 12px; color: var(--r-ink2, #888); }
+.settle-cols {
+  display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+  margin: 20px auto 0; max-width: 560px;
+}
+.week-box, .prog-box {
+  flex: 1; min-width: 220px;
+  padding: 14px 16px;
+  border: 1px solid var(--r-border, #e4e4e4);
+  border-radius: 12px;
+  text-align: left;
+}
+.box-title { font-size: 13px; color: var(--r-ink2, #888); }
+.week-row { display: flex; gap: 6px; margin-top: 10px; }
+.week-cell {
+  flex: 1; text-align: center; padding: 7px 0;
+  border-radius: 8px; font-size: 12.5px;
+  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #9aa0a6);
+}
+.week-cell.on { background: var(--r-accent, #8a4b3a); color: #fff; }
+.week-cell.today { outline: 1.5px solid var(--r-accent, #8a4b3a); outline-offset: 1px; }
+.prog-head { display: flex; align-items: center; justify-content: space-between; }
+.prog-pct { font-size: 18px; font-weight: 600; color: var(--r-accent, #8a4b3a); }
+.prog-bar {
+  height: 8px; margin: 10px 0 8px;
+  background: var(--r-ui, #f4f5f7); border-radius: 999px; overflow: hidden;
+}
+.prog-bar i { display: block; height: 100%; background: var(--r-accent, #8a4b3a); transition: width .4s; }
+.prog-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--r-ink2, #888); }
+
 .wrong-summary { margin: 26px auto 0; max-width: 420px; text-align: left; }
 .wrong-summary h3 { font-size: 14px; margin: 0 0 8px; }
 .wrong-summary ul { list-style: none; padding: 0; margin: 0; }
@@ -716,4 +1063,19 @@ onUnmounted(() => {
 }
 .scen-acts { display: flex; gap: 10px; justify-content: center; }
 
+
+/* 断点续练的询问框，样式跟场景插入那个提示（.scen-mask）保持一致 */
+.resume-mask {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .28);
+}
+.resume-card {
+  background: var(--r-bg, #fff); border-radius: 16px; padding: 24px 26px;
+  max-width: 380px; text-align: center;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .18);
+}
+.resume-card h3 { margin: 0 0 8px; font-size: 17px; }
+.resume-sub { font-size: 13.5px; color: var(--r-ink2, #6b7280); line-height: 1.7; margin: 0; }
+.resume-acts { display: flex; gap: 10px; justify-content: center; margin: 16px 0 10px; }
 </style>

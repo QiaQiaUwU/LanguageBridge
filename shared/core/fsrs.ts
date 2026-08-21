@@ -105,6 +105,26 @@ export function countDue(now = Date.now()): number {
   return n
 }
 
+/**
+ * 一个词的「下次复习」时间，全项目只认这一个来源。
+ *
+ * 之前有两套：打字流程走 FSRS（存在这个文件里），听写走
+ * spacedRepetition.ts 那张固定间隔表（1/2/4/7/15/30 天），写在
+ * word.learningRecord.nextReview 上。单词详情显示的是后者，
+ * 而今日复习挑词看的是前者 —— 同一个词两个日期，怎么都对不上。
+ *
+ * 现在统一：有 FSRS 卡片就用卡片的 due；没有（老数据、还没练过的词）
+ * 才回退到 learningRecord.nextReview，不至于让历史记录凭空消失。
+ */
+export function nextReviewOf(word: {
+  word: string
+  learningRecord?: { nextReview?: string }
+}): string {
+  const card = getCard(word.word)
+  if (card) return new Date(card.due).toISOString()
+  return word.learningRecord?.nextReview || ''
+}
+
 export function toPlainCard(card: Card): FsrsCard {
   return {
     due: new Date(card.due).toISOString(),

@@ -52,15 +52,11 @@
           <button v-for="l in LEVELS" :key="l" class="chip" :class="{ on: level === l }" @click="level = l">{{ l }}</button>
         </div>
         <span class="hint">
-          生成 {{ LEVEL_PARAMS[level].vocab }} 词 · {{ LEVEL_PARAMS[level].dialogues }} 段对话 ·
           1 篇短文 · {{ LEVEL_PARAMS[level].writing }} 道写作题
         </span>
       </div>
 
-      <p v-if="seedWords.length" class="hint">
-        会围绕你正在学的这 {{ Math.min(seedWords.length, LEVEL_PARAMS[level].vocab) }} 个词展开，
-        不是让 AI 另挑一批——否则学完教材，原本要学的词一个也没练到。
-      </p>
+
 
       <div class="actions">
         <button class="dark-btn" :disabled="!canGenerate || generating" @click="doGenerate">
@@ -116,10 +112,16 @@
             <p class="en">{{ p.en }}</p>
             <p class="zh">{{ p.zh }}</p>
           </div>
-          <button class="ghost-btn small" @click="sendToReading">发到阅读助手</button>
+          <div class="pod-row">
+            <button class="ghost-btn small" @click="sendToReading">发到阅读助手</button>
+            <button class="ghost-btn small" :disabled="podBusy" @click="makePodcast">
+              {{ podBusy ? '生成中…' : '改写成沉浸式播客稿' }}
+            </button>
+          </div>
+          <p v-if="podMsg" class="pod-msg">{{ podMsg }}</p>
         </div>
 
-        <div v-else class="pane">
+        <div v-else-if="tab === 'practice'" class="pane">
           <div v-for="(w, i) in material.writing" :key="i" class="task">
             <p class="q-en">{{ w.prompt_en }}</p>
             <p class="q-zh">{{ w.prompt_zh }}</p>
@@ -161,13 +163,60 @@
             </div>
           </div>
         </div>
+
+        <div v-else-if="tab === 'sentence'" class="pane">
+          <!-- 造句训练：用目标词写一句，即时查语法 -->
+          <div class="task make-sent">
+            <p class="q-en">造句训练</p>
+            <p class="q-zh">挑一个词，用它写一句话，写完点检查</p>
+            <div class="word-chips">
+              <button
+                v-for="v in material.vocabulary"
+                :key="v.word"
+                class="chip"
+                :class="{ on: sentWord === v.word }"
+                @click="sentWord = v.word"
+              >{{ v.word }}</button>
+            </div>
+            <textarea
+              v-model="sentDraft"
+              class="answer"
+              rows="3"
+              :placeholder="sentWord ? `用「${sentWord}」写一句话` : '先选一个词'"
+            ></textarea>
+            <div class="task-actions">
+              <button class="dark-btn small" :disabled="!sentDraft.trim() || sentChecking" @click="doCheckSentence">
+                {{ sentChecking ? '检查中…' : '检查语法' }}
+              </button>
+              <span v-if="sentStats.length" class="pod-msg">
+                常错：{{ sentStats.map(x => `${x.type}×${x.n}`).join('、') }}
+              </span>
+            </div>
+
+            <div v-if="sentResult" class="check-box">
+              <p class="check-line">
+                <template v-for="(part, k) in sentParts" :key="k">
+                  <span v-if="part.issue" class="bad" :title="`${part.issue.type}：${part.issue.why}`">{{ part.text }}</span>
+                  <span v-else>{{ part.text }}</span>
+                </template>
+              </p>
+              <p v-if="sentResult.ok" class="check-ok">没问题，这句可以直接用</p>
+              <div v-for="(it, k) in sentResult.issues" :key="k" class="check-issue">
+                <span class="ci-type">{{ it.type }}</span>
+                <span class="ci-fix">{{ it.span }} → {{ it.fix }}</span>
+                <span class="ci-why">{{ it.why }}</span>
+              </div>
+              <p v-if="sentResult.better" class="check-better">更地道：{{ sentResult.better }}</p>
+            </div>
+          </div>
+        </div>
       </section>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWordStore } from '@/shared/stores/wordStore'
 import { useReaderStore } from '@/apps/reading-assistant/stores/readerStore'
@@ -182,12 +231,21 @@ const wordStore = useWordStore()
 const readerStore = useReaderStore()
 
 const LEVELS: ScenarioLevel[] = ['CET4', 'CET6', 'IELTS', 'TOEFL']
-const TABS = [
-  { key: 'vocab', label: '核心词' },
-  { key: 'dialogue', label: '对话' },
-  { key: 'reading', label: '短文' },
-  { key: 'practice', label: '实战检测' }
-]
+const ALL_TABS = [
+  { key: 'vocab', label: '核心词', need: 'vocabulary' },
+  { key: 'dialogue', label: '对话', need: 'dialogues' },
+  { key: 'reading', label: '短文', need: 'reading' },
+  { key: 'practice', label: '实战检测', need: 'writing' },
+  { key: 'sentence', label: '造句训练', need: 'sentence' }
+] as const
+
+/**
+ * 只显示这次勾选要练的部分。
+ *
+ * 「这次要练」那一排选项之前是摆设 —— parts 声明了却没有任何地方读它，
+ * 勾不勾结果都一样，造句训练还硬塞在写作题上面。
+ */
+const TABS = computed(() => ALL_TABS.filter(t => parts.value[t.need as PartKey]))
 
 const sourceKind = ref<'topic' | 'morpheme' | 'custom'>('topic')
 const picked = ref('')
@@ -233,21 +291,45 @@ const seedWords = computed<WordItem[]>(() => {
   )
 })
 
+/**
+ * 生成场景材料。
+ *
+ * 登记到右下角任务中心：这一步要调好几次 AI，几十秒到一两分钟，
+ * 期间用户不该被钉在这个页面上干等 —— 可以去背单词、去看文章，
+ * 跑完了回来点开就能学。失败也会留一条写明原因。
+ */
 async function doGenerate() {
   generating.value = true
   errorMsg.value = ''
+
+  const { startTask, updateTask, finishTask, failTask } = await import('@/shared/core/taskCenter')
+  const taskId = 'scenario:' + Date.now().toString(36)
+  const picked = Object.entries(parts.value).filter(([, on]) => on).map(([k]) => k)
+  startTask({
+    id: taskId,
+    kind: '场景',
+    subject: themeName.value || '场景材料',
+    detail: `准备生成：${picked.join('、')}`
+  })
+
   try {
+    updateTask(taskId, { detail: '正在生成…' })
     const m = await generateScenario(themeName.value, level.value, seedWords.value)
     if (!m) {
-      errorMsg.value = 'AI 没有返回可用的内容，可能是模型输出格式不对。可以再试一次，或换个主题。'
+      const msg = 'AI 没有返回可用的内容，可能是模型输出格式不对。可以再试一次，或换个主题。'
+      errorMsg.value = msg
+      failTask(taskId, msg)
       return
     }
     material.value = m
     answers.value = m.writing.map(() => '')
     reviews.value = m.writing.map(() => null)
-    tab.value = 'vocab'
+    tab.value = TABS.value[0]?.key || 'vocab'
+    finishTask(taskId, `${m.vocabulary.length} 个词 · ${m.dialogues.length} 段对话，可以开始学了`)
   } catch (e) {
-    errorMsg.value = `生成失败：${e instanceof Error ? e.message : String(e)}`
+    const msg = e instanceof Error ? e.message : String(e)
+    errorMsg.value = `生成失败：${msg}`
+    failTask(taskId, msg)
   } finally {
     generating.value = false
   }
@@ -305,6 +387,118 @@ async function saveAsWordBook() {
   errorMsg.value = `已存成词表「场景 · ${m.scenario}」，可以在主页选它开始打字练习。`
 }
 
+/**
+ * 把当前场景改写成中英交替的沉浸式播客稿。
+ *
+ * 跟「发到阅读助手」的区别：那个是把 reading 段落原样搬过去（教材体），
+ * 这个是重新生成成口播体 —— 一句中文陈述紧跟一句英文表达，
+ * 存成文章后就能配音频、对轴、跟读，跟别的播客稿一样用。
+ */
+/**
+ * 学之前先勾要练什么。
+ *
+ * 之前是生成完再在各处加按钮（「改写成播客稿」「造句训练」），
+ * 用户得先生成一堆用不上的东西，再去找入口 —— 顺序反了。
+ */
+/**
+ * 要生成哪几部分 —— 读首页「更改进度」里存的那份设置。
+ * 这里原来自己摆了一排选项，跟学习计划各存各的，容易对不上。
+ */
+type PartKey = 'vocabulary' | 'dialogues' | 'reading' | 'writing' | 'sentence' | 'podcast'
+
+const parts = computed<Record<PartKey, boolean>>(() => {
+  const def: Record<PartKey, boolean> = {
+    vocabulary: true, dialogues: true, reading: true,
+    writing: true, sentence: false, podcast: false
+  }
+  try {
+    return { ...def, ...JSON.parse(localStorage.getItem('lb-scene-parts') || '{}') }
+  } catch {
+    return def
+  }
+})
+
+/* ---------- 造句训练 ---------- */
+
+const sentWord = ref('')
+const sentDraft = ref('')
+const sentChecking = ref(false)
+const sentResult = ref<import('@/shared/core/scenarioLearning').SentenceCheck | null>(null)
+const sentParts = ref<{ text: string; issue?: any }[]>([])
+
+/**
+ * 错误类型统计。
+ * 单次检查只能告诉你这句哪错了，攒起来才看得出自己老犯哪一类 ——
+ * 那才是该专门去练的东西。存 localStorage，跨会话累积。
+ */
+const errorTally = ref<Record<string, number>>(
+  (() => {
+    try { return JSON.parse(localStorage.getItem('lb-grammar-tally') || '{}') } catch { return {} }
+  })()
+)
+const sentStats = computed(() =>
+  Object.entries(errorTally.value)
+    .map(([type, n]) => ({ type, n: n as number }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 4)
+)
+
+async function doCheckSentence() {
+  const text = sentDraft.value.trim()
+  if (!text || sentChecking.value) return
+  sentChecking.value = true
+  sentResult.value = null
+  try {
+    const { checkSentenceGrammar, splitByIssues } = await import('@/shared/core/scenarioLearning')
+    const r = await checkSentenceGrammar(text, sentWord.value)
+    if (!r) return
+    sentResult.value = r
+    sentParts.value = splitByIssues(text, r.issues)
+
+    const tally = { ...errorTally.value }
+    for (const it of r.issues) tally[it.type] = (tally[it.type] || 0) + 1
+    errorTally.value = tally
+    localStorage.setItem('lb-grammar-tally', JSON.stringify(tally))
+  } finally {
+    sentChecking.value = false
+  }
+}
+
+const podBusy = ref(false)
+const podMsg = ref('')
+
+async function makePodcast() {
+  const m = material.value
+  if (!m || podBusy.value) return
+  podBusy.value = true
+  podMsg.value = ''
+  try {
+    const { generatePodcastArticle } = await import('@/shared/core/scenarioLearning')
+    const seeds = (m.vocabulary || []).map(v => v.word).filter(Boolean)
+    const draft = await generatePodcastArticle(m.scenario, seeds)
+    if (!draft?.sentences.length) {
+      podMsg.value = '没能生成内容，可以再试一次'
+      return
+    }
+    const now = new Date().toISOString()
+    await readerStore.saveArticle({
+      id: `art-pod-${Date.now()}`,
+      title: draft.title || m.scenario,
+      sentences: draft.sentences,
+      notes: '',
+      // 这个 source 是学习记录页认「AI 生成、花过钱」的依据，别改
+      source: 'scenario-podcast',
+      createdAt: now,
+      updatedAt: now
+    } as any)
+    podMsg.value = `已生成《${draft.title}》，${draft.sentences.length} 句${draft.covered.length ? `，用上了 ${draft.covered.length} 个目标词` : ''}。可以去阅读助手里配音频、跟读。`
+  } catch (e) {
+    podMsg.value = '生成失败：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    podBusy.value = false
+  }
+}
+
 async function sendToReading() {
   const m = material.value
   if (!m?.reading?.paragraphs?.length) return
@@ -314,6 +508,8 @@ async function sendToReading() {
     title: `${m.reading.title || m.scenario}（场景学习）`,
     sentences: m.reading.paragraphs.map(p => ({ en: p.en, zh: p.zh })),
     notes: '',
+    // 同上：这批也是调 AI 生成的，要能在学习记录里找回来
+    source: 'scenario-reading',
     createdAt: now,
     updatedAt: now
   } as any)
@@ -330,6 +526,7 @@ async function saveNote(i: number) {
     title: `场景实战：${m.scenario}`,
     sentences: [],
     notes: html,
+    source: 'scenario-note',
     createdAt: now,
     updatedAt: now
   } as any)
@@ -408,6 +605,37 @@ onMounted(async () => {
 .turn-body { flex: 1; min-width: 0; }
 .en { margin: 0 0 2px; line-height: 1.7; }
 .zh { margin: 0; font-size: 13px; color: var(--r-ink2, #888); line-height: 1.7; }
+.make-sent { border-left: 3px solid var(--r-accent, #8a4b3a); }
+.word-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chip {
+  padding: 3px 9px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--r-border, #e5e7eb); background: none;
+  font-size: 12.5px; font-family: inherit; color: var(--r-ink2, #6b7280);
+  &:hover { border-color: var(--r-accent, #8a4b3a); }
+  &.on { background: var(--r-accent, #8a4b3a); border-color: var(--r-accent, #8a4b3a); color: #fff; }
+}
+.check-box {
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  background: var(--r-ui, #f7f8fa);
+}
+.check-line { margin: 0 0 8px; line-height: 1.9; font-size: 14px; }
+.check-line .bad {
+  background: color-mix(in srgb, #b5493c 16%, transparent);
+  border-bottom: 2px solid #b5493c; padding: 1px 2px; cursor: help;
+}
+.check-ok { margin: 0; color: #3a8a5c; font-size: 13px; }
+.check-issue { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; font-size: 12.5px; }
+.ci-type {
+  flex-shrink: 0; padding: 0 6px; border-radius: 5px; font-size: 11.5px;
+  background: color-mix(in srgb, #b5493c 12%, transparent); color: #b5493c;
+}
+.ci-fix { color: var(--r-ink, #1f2328); }
+.ci-why { color: var(--r-ink2, #9aa0a6); }
+.check-better { margin: 8px 0 0; font-size: 13px; color: #3a8a5c; }
+
+.pod-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.pod-msg { margin: 8px 0 0; font-size: 12.5px; color: var(--r-ink2, #6b7280); line-height: 1.6; }
+
 .para { margin-bottom: 16px; }
 
 .task { margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid var(--r-border, #f0f0f0); }

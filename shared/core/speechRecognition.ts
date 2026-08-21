@@ -15,7 +15,9 @@ export interface Recognizer {
 export function createRecognizer(
   onResult: (text: string, isFinal: boolean) => void,
   onEnd?: () => void,
-  lang = 'en-US'
+  lang = 'en-US',
+  /** 识别失败时的原因，交给调用方决定怎么提示 */
+  onError?: (reason: string) => void
 ): Recognizer | null {
   const Ctor = getCtor()
   if (!Ctor) return null
@@ -37,15 +39,31 @@ export function createRecognizer(
     else if (interimText) onResult(interimText.trim(), false)
   }
   rec.onend = () => onEnd?.()
-  rec.onerror = () => onEnd?.()
+  /**
+   * 错误要往外说，不能吞。
+   *
+   * 原来是 `onerror = () => onEnd?.()`，把原因整个丢掉；start() 又套了个空
+   * catch —— 于是识别失败时界面上什么都没有，只表现为"转文字没反应"。
+   * 常见原因是录音和识别同时抢麦克风，部分浏览器会直接报 audio-capture。
+   */
+  rec.onerror = (e: any) => {
+    const code = e?.error || 'unknown'
+    // no-speech 是正常的（这一段没人说话），不用惊动用户
+    if (code !== 'no-speech' && code !== 'aborted') onError?.(code)
+    onEnd?.()
+  }
 
   return {
     start: () => {
       try {
         rec.start()
-      } catch {
+      } catch (e: any) {
+        // InvalidStateError 表示上一次还没停干净，重来一次通常就好
+        onError?.(e?.name === 'InvalidStateError' ? 'busy' : String(e?.message || e))
       }
     },
-    stop: () => rec.stop()
+    stop: () => {
+      try { rec.stop() } catch { /* 已经停了 */ }
+    }
   }
 }

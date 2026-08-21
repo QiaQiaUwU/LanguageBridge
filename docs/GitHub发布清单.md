@@ -116,12 +116,23 @@ git push origin v0.1.0
 
 | 文件 | 作用 | 优先级 |
 | --- | --- | --- |
-| `LICENSE` | 没有 License 的仓库默认保留所有权利，别人不能合法使用 | 高 |
+| `LICENSE` | **必须是 GPL-3.0**，见下方说明 | 最高 |
 | `docs/screenshots/` | README 里引用的截图，现在是空目录 | 高 |
 | `.github/ISSUE_TEMPLATE/bug_report.md` | 让别人报 bug 时带上版本和复现步骤 | 中 |
 | `CHANGELOG.md` | 版本变更记录 | 低 |
 
-MIT License 全文可以直接从 <https://choosealicense.com/licenses/mit/> 复制，把年份和名字换成自己的。
+### 协议必须是 GPL-3.0
+
+打字判定部分（`shared/core/typeStep.ts`、`TypingCard.vue` 的字母分段渲染与按住查看）
+移植自 [TypeWords](https://github.com/zyronon/typing-word)，该项目是 **GPL-3.0**。
+GPL-3.0 是传染性协议，衍生作品必须沿用同一协议并公开源码。
+
+```bash
+curl -o LICENSE https://www.gnu.org/licenses/gpl-3.0.txt
+```
+
+README 的致谢里已经写明移植自哪个项目、移植了哪些文件 —— 这既是 GPL 的署名
+要求，也能避免被当成抄袭。
 
 ---
 

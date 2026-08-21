@@ -106,6 +106,8 @@ import { useWordStore } from '@/shared/stores/wordStore'
 import { playWord } from '@/shared/core/audio'
 import { recordReview } from '@/shared/core/activityLog'
 import type { WordItem } from '@/shared/types/WordItem'
+import { startStudyClock, stopStudyClock } from '@/shared/core/studyClock'
+import { loadFsrsData } from '@/shared/core/fsrs'
 
 const wordStore = useWordStore()
 const route = useRoute()
@@ -266,10 +268,15 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   await wordStore.loadWords()
+  startStudyClock()
+  await loadFsrsData()   // 结果要写进 FSRS，先把卡片读进来，别只落到 localStorage 副本上
   if (route.query.auto === '1' && source.value.length >= 4) start()
   window.addEventListener('keydown', onKey)
 })
-onUnmounted(() => window.removeEventListener('keydown', onKey))
+onUnmounted(() => {
+  stopStudyClock()
+  window.removeEventListener('keydown', onKey)
+})
 </script>
 
 <style scoped lang="scss">

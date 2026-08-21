@@ -104,6 +104,98 @@ function checkTemplate(file, tpl) {
   return problems
 }
 
+/**
+ * 样式块花括号配对。
+ *
+ * 批量改 CSS 时很容易删掉一个选择器却留下它的 }，sass 只会在 build 时报
+ * 「unmatched "}"」并且给的是样式块内的行号，跟文件行号对不上，很难找。
+ * 这里提前查出来，并把上下文打出来。
+ */
+function checkStyles(src) {
+  const problems = []
+  const re = /<style[^>]*>([\s\S]*?)<\/style>/g
+  let m
+  while ((m = re.exec(src))) {
+    const lines = m[1].split('\n')
+    let depth = 0
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      // 去掉字符串和注释里的花括号，避免误判
+      const clean = line
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/, '')
+        .replace(/'[^']*'|"[^"]*"/g, '')
+      depth += (clean.match(/\{/g) || []).length
+      depth -= (clean.match(/\}/g) || []).length
+      if (depth < 0) {
+        const ctx = lines.slice(Math.max(0, i - 3), i + 1)
+          .map((l, k) => `      ${i - Math.min(i, 3) + k + 1} | ${l}`)
+          .join('\n')
+        problems.push(`样式第 ${i + 1} 行多出一个 }\n${ctx}`)
+        depth = 0
+      }
+    }
+    if (depth > 0) problems.push(`样式块结尾还缺 ${depth} 个 }`)
+  }
+  return problems
+}
+
+/**
+ * 带 immediate 的 watch 引用了后面才声明的 const —— 暂时性死区。
+ *
+ * setup 阶段 immediate 会立刻执行回调，此时下面的 const 还没初始化，
+ * 运行时报 "Cannot access 'X' before initialization"，而且压缩后变量名变成
+ * 单字母，报错信息完全看不出是谁。构建期发现不了，只有真跑起来才炸。
+ */
+function checkImmediateWatch(src) {
+  const problems = []
+  const m = src.match(/<script setup[^>]*>([\s\S]*?)<\/script>/)
+  if (!m) return problems
+  const code = m[1]
+
+  // 收集每个顶层 const 的声明位置
+  const declAt = new Map()
+  for (const d of code.matchAll(/^const\s+([A-Za-z_$][\w$]*)/gm)) {
+    if (!declAt.has(d[1])) declAt.set(d[1], d.index)
+  }
+
+  // 找出 watch(...) { immediate: true } 这种调用
+  for (const w of code.matchAll(/watch\s*\(/g)) {
+    const start = w.index
+    // 粗略取这次调用的范围：到下一个顶层 watch/function/const 之前
+    // 只看这一次 watch 调用本身：从 watch( 到括号配平为止。
+    // 之前粗暴地取后面 1200 个字符，会把不相干的代码也算进来，产生误报。
+    let depth = 0
+    let end = start
+    for (let i = start; i < code.length; i++) {
+      const c = code[i]
+      if (c === '(') depth++
+      else if (c === ')') {
+        depth--
+        if (depth === 0) { end = i + 1; break }
+      }
+    }
+    if (end <= start) continue
+    const tail = code.slice(start, end)
+    if (!/immediate:\s*true/.test(tail)) continue
+    for (const [name, at] of declAt) {
+      if (at <= start) continue
+      // 这个 watch 里用到了后面才声明的变量
+      const used = new RegExp('(^|[^\\w$.])' + name + '(\\.|\\s|,|\\)|$)').test(tail)
+      if (used) {
+        const line = code.slice(0, start).split('\n').length
+        problems.push(
+          `第 ${line} 行的 watch 带 immediate，但用到了第 ` +
+          `${code.slice(0, at).split('\n').length} 行才声明的 ${name} —— 运行时会报 ` +
+          `"Cannot access '${name}' before initialization"`
+        )
+        break
+      }
+    }
+  }
+  return problems
+}
+
 let bad = 0
 let checked = 0
 for (const dir of ['apps', 'src']) {
@@ -114,7 +206,7 @@ for (const dir of ['apps', 'src']) {
     const tpl = templateOf(src)
     if (!tpl) continue
     checked++
-    const problems = checkTemplate(f, tpl)
+    const problems = [...checkTemplate(f, tpl), ...checkStyles(src), ...checkImmediateWatch(src)]
     if (problems.length) {
       bad++
       console.error(`\n✗ ${relative(ROOT, f)}`)

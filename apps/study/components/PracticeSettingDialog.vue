@@ -171,7 +171,21 @@
           <option value="listenOnly">只听写</option>
           <option value="dictationOnly">只默写</option>
           <option value="review">只复习旧词</option>
+          <option value="shuffle">随机复习（新旧混在一起默写）</option>
         </select>
+      </div>
+
+      <!-- 场景学习要生成哪几部分。放这儿是因为它本来就属于"学习计划"，
+           不该在场景页面上再摆一排选项。带 ✦ 的会调用 AI 接口。 -->
+      <div class="field">
+        <label class="f-label">场景学习生成</label>
+        <div class="parts-row">
+          <label v-for="p in SCENE_PARTS" :key="p.key" class="part-chk" :title="p.tip">
+            <input v-model="sceneParts[p.key]" type="checkbox" />
+            {{ p.label }}<span v-if="p.ai" class="ai-dot" title="会调用 AI 接口">✦</span>
+          </label>
+        </div>
+        <p class="f-hint">带 ✦ 的需要联网调用 AI，勾得越多生成越慢、消耗越多额度。</p>
       </div>
 
       <div class="actions">
@@ -183,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { WordGroup } from '@/shared/types/WordItem'
 import {
   getStudySettings, saveStudySettings, getAccomplishDays, getAccomplishDate,
@@ -204,6 +218,27 @@ const emit = defineEmits<{
 }>()
 
 const s = getStudySettings()
+
+/**
+ * 场景学习要生成哪几部分。
+ * 存 localStorage，场景页面直接读同一份，不再自己维护一套选项。
+ */
+const SCENE_PARTS = [
+  { key: 'vocabulary', label: '核心词', ai: true, tip: '这个场景里最该会的词' },
+  { key: 'dialogues', label: '对话', ai: true, tip: '两人对话，看词怎么用' },
+  { key: 'reading', label: '短文', ai: true, tip: '一段连贯的文字' },
+  { key: 'writing', label: '写作题', ai: true, tip: '写一段，AI 批改' },
+  { key: 'sentence', label: '造句训练', ai: true, tip: '用目标词写单句，即时查语法' },
+  { key: 'podcast', label: '播客稿', ai: true, tip: '生成可配音、可跟读的双语随笔' }
+] as const
+
+const sceneParts = reactive<Record<string, boolean>>({
+  vocabulary: true, dialogues: true, reading: true,
+  writing: true, sentence: false, podcast: false,
+  ...(() => {
+    try { return JSON.parse(localStorage.getItem('lb-scene-parts') || '{}') } catch { return {} }
+  })()
+})
 
 const perDay = ref(props.group?.perDayStudyNumber ?? props.perDayStudyNumber ?? 20)
 const startIndex = ref(props.group?.lastLearnIndex ?? props.lastLearnIndex ?? 0)
@@ -262,7 +297,10 @@ const shortcuts = ref({ ...s.shortcutKeyMap })
 const shortcutRows = [
   { field: 'showTip' as const, label: '看提示' },
   { field: 'replaySound' as const, label: '重听发音' },
-  { field: 'skipWord' as const, label: '跳过' }
+  { field: 'skipWord' as const, label: '跳过' },
+  { field: 'toggleMastered' as const, label: '标记已掌握' },
+  { field: 'collectWord' as const, label: '收藏进词表' },
+  { field: 'editNote' as const, label: '写笔记' }
 ]
 const listeningFor = ref('')
 
@@ -285,6 +323,7 @@ onMounted(() => window.addEventListener('keydown', onCaptureKey, true))
 onUnmounted(() => window.removeEventListener('keydown', onCaptureKey, true))
 
 function save() {
+  localStorage.setItem('lb-scene-parts', JSON.stringify(sceneParts))
   saveStudySettings({
     wordReviewRatio: reviewRatio.value,
     autoNextWord: autoNext.value,
@@ -408,4 +447,13 @@ function save() {
 }
 .key-btn.listening { border-color: var(--r-accent, #8a4b3a); color: var(--r-accent, #8a4b3a); }
 .tiny { width: 46px; }
+/* 场景学习那一栏的标题。加这块时漏了样式 */
+.f-label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--r-ink2, #6b7280); }
+.parts-row { display: flex; flex-wrap: wrap; gap: 10px 14px; }
+.part-chk {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 13px; cursor: pointer;
+}
+.ai-dot { color: var(--r-accent, #8a4b3a); font-size: 11px; }
+.f-hint { margin: 6px 0 0; font-size: 11.5px; color: var(--r-ink2, #9aa0a6); }
 </style>

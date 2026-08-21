@@ -33,13 +33,39 @@ export interface ParsedEntry {
 }
 
 export function parseLine(raw: string): ParsedEntry | null {
-  const line = raw.replace(/^\uFEFF/, '').trim()
+  let line = raw.replace(/^\uFEFF/, '').trim()
   if (!line || line.startsWith('#') || line.startsWith('//')) return null
+
+  // 去掉行首编号：「1. abandon」「12、abandon」「3) abandon」。
+  // 词表从 PDF / Word 复制出来几乎都带编号，不去掉整行都解析不出。
+  line = line.replace(/^\s*\d{1,4}\s*[.、)．]\s+/, '')
+  if (!line) return null
 
   let word = ''
   let rest = ''
 
-  const sepMatch = line.match(/[;；\t]/)
+  // 冒号和「词 - 释义」也是常见分隔写法
+  const colon = line.match(/^([A-Za-z][A-Za-z '().\-/]*?)\s*[:：]\s*(.+)$/)
+  if (colon) {
+    const ph = extractPhonetic(colon[2].trim())
+    const po = extractPos(ph.rest)
+    return { word: colon[1].trim(), phonetic: ph.phonetic, partOfSpeech: po.pos, chinese: po.rest }
+  }
+  const dash = line.match(/^([A-Za-z][A-Za-z '().\/]*?)\s+[-—–]\s+(.+)$/)
+  if (dash) {
+    const ph = extractPhonetic(dash[2].trim())
+    const po = extractPos(ph.rest)
+    return { word: dash[1].trim(), phonetic: ph.phonetic, partOfSpeech: po.pos, chinese: po.rest }
+  }
+
+  // 分号当分隔符只在「分号左边确实像一个单词」时才成立。
+  // 「accommodation n. 住处；膳宿」里的分号是释义内部的顿开，
+  // 按分号切会把词切成「accommodation n. 住处」。
+  let sepMatch = line.match(/[;；\t]/)
+  if (sepMatch && sepMatch.index !== undefined && /[;；]/.test(sepMatch[0])) {
+    const left = line.slice(0, sepMatch.index).trim()
+    if (!/^[A-Za-z][A-Za-z '().\-/]*$/.test(left)) sepMatch = null
+  }
   if (sepMatch && sepMatch.index !== undefined) {
     word = line.slice(0, sepMatch.index).trim()
     rest = line.slice(sepMatch.index + 1).trim()

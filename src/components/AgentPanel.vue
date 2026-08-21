@@ -96,6 +96,25 @@
         </button>
       </div>
       <p v-if="modelsError" class="models-error">{{ modelsError }}</p>
+
+      <button class="ghost-btn small" :disabled="probing2" @click="probeQuota">
+        {{ probing2 ? '测试中…' : '测一下额度够不够（发两个大小不同的请求）' }}
+      </button>
+      <pre v-if="probeOut" class="s-hint" style="white-space: pre-wrap">{{ probeOut }}</pre>
+
+      <!-- 长任务单独一个模型槽：中转站按上下文窗口预扣费时，主模型不用动 -->
+      <label class="s-label">长任务专用模型（可留空）</label>
+      <input
+        v-model="aiSettings.heavyModel"
+        class="s-input"
+        autocomplete="off"
+        placeholder="留空就用上面那个"
+      />
+      <p class="s-hint">
+        整理转录稿这类要吐大段内容的任务用它。有些中转站按模型的<b>上下文窗口</b>整个预扣费，
+        百万窗口的模型一次就要预扣几百块余额，报 403「预扣费额度失败」——
+        跟我们发多少 max_tokens 无关。这里填个小窗口的便宜模型即可。
+      </p>
       <div v-if="availableModels.length" class="models-grid">
         <button v-for="m in availableModels" :key="m" class="model-item" @click="aiSettings.model = m">{{ m }}</button>
       </div>
@@ -138,8 +157,18 @@
       </div>
 
       <div class="panel-chat" ref="chatLogEl">
-        <div v-for="(m, i) in agentChat.chatHistory" :key="i" class="msg" :class="m.role">
-          <p>{{ m.content }}</p>
+        <div v-for="(m, i) in agentChat.chatHistory" :key="i" v-show="!m.hidden" class="msg" :class="m.role">
+          <p v-if="m.content">{{ m.content }}</p>
+          <!-- 助手回答里嵌的交互部件，随时可以点开 -->
+          <AgentWidget v-for="(w, k) in (m.widgets || [])" :key="k" :spec="w" />
+
+          <!-- 待确认的操作。模型说要做，得用户点头才真的动数据 -->
+          <div v-if="m.pendingAction" class="act-bar">
+            <span class="act-text">{{ m.actionText }}</span>
+            <button class="dark-btn small" @click="doAction(i)">执行</button>
+            <button class="ghost-btn small" @click="agentChat.rejectAction(i)">不用</button>
+          </div>
+          <p v-else-if="m.actionResult" class="act-done">{{ m.actionResult }}</p>
           <span v-if="m.role === 'assistant'" class="save-vocab-link" @click="saveToVocab(i)">存为词库讲解</span>
         </div>
         <p v-if="!agentChat.chatHistory.length" class="empty-hint">
@@ -172,15 +201,19 @@
 import { ref, computed, nextTick, watch } from 'vue'
 import { agentPanelOpen, agentPanelPrefillText, agentSelectionContext, clearAgentSelectionContext, articleQuickActions, lastQuickActionResult, agentButtonRect } from '@/shared/core/agentPanelState'
 import { useAgentChatStore } from '@/shared/stores/agentChatStore'
+import { useRouter } from 'vue-router'
 import { useWordStore } from '@/shared/stores/wordStore'
 import { useReaderStore } from '@/apps/reading-assistant/stores/readerStore'
 import { aiSettings, isAiConfigured, aiProfiles, saveCurrentAsProfile, loadProfile, deleteProfile } from '@/shared/core/aiSettings'
 import { askAi, AiError, fetchAvailableModels } from '@/shared/core/aiClient'
+import AgentWidget from './AgentWidget.vue'
 import { playWord } from '@/shared/core/audio'
 import StreakHeatmap from './StreakHeatmap.vue'
 import { getTodos, addTodo, toggleTodo, deleteTodo, getHabits, addHabit, deleteHabit, checkinHabit, type Todo, type Habit } from '@/shared/core/studyTodos'
 
 const agentChat = useAgentChatStore()
+// openPage 工具要跳页面，这个组件原来没引 router
+const router = useRouter()
 const wordStore = useWordStore()
 const readerStore = useReaderStore()
 const aiReady = computed(() => isAiConfigured())
@@ -344,7 +377,59 @@ const showKey = ref(false)
 const newProfileName = ref('')
 const activeProfileName = ref('')
 const availableModels = ref<string[]>([])
+/**
+ * 执行模型请求的操作。
+ * store 不直接依赖 wordStore/router，这里把它们喂进去。
+ */
+async function doAction(i: number) {
+  const { getRecentLookups } = await import('@/shared/core/wordLookup')
+  await agentChat.confirmAction(i, {
+    wordStore,
+    readerStore,
+    router,
+    recentLookups: () => getRecentLookups(20)
+  })
+  // 执行结果已经回填成一条隐藏消息，让模型接着说
+  agentChat.send('')
+}
+
 const loadingModels = ref(false)
+
+/**
+ * 额度自检：同一个模型连发两个请求，一小一大。
+ *
+ * 「整理」报预扣费 403 而「翻译」正常，两者唯一差别是请求大小。
+ * 这里把变量单独拎出来测一次，就能定性：
+ *  - 两个都过 → 跟请求大小无关，之前的失败另有原因
+ *  - 小的过、大的挂 → 确实是请求越大预扣越多，继续缩小分块
+ *  - 两个都挂 → 账户余额本身不够这个模型的门槛，代码层面无解
+ */
+const probing2 = ref(false)
+const probeOut = ref('')
+
+async function probeQuota() {
+  probing2.value = true
+  probeOut.value = ''
+  const lines: string[] = []
+  const cases: [string, string, number][] = [
+    ['小请求（约 40 字）', '把这句话翻译成中文：The rain kept falling all night.', 500],
+    ['中请求（约 1200 字）', '把下面这段话翻译成中文：\n' + 'The rain kept falling all night, and the streets were empty. '.repeat(20), 1500],
+    ['大请求（约 5000 字）', '把下面这段话翻译成中文：\n' + 'The rain kept falling all night, and the streets were empty. '.repeat(85), 3000]
+  ]
+  for (const [name, prompt, mt] of cases) {
+    try {
+      await askAi(prompt, undefined, mt, 60_000)
+      lines.push(`${name} · max_tokens=${mt} → 成功`)
+    } catch (e) {
+      lines.push(`${name} · max_tokens=${mt} → 失败：${e instanceof Error ? e.message : e}`)
+    }
+    probeOut.value = lines.join('\n')
+  }
+  lines.push('')
+  lines.push('怎么看：全成功 = 跟请求大小无关；小的成功大的失败 = 请求越大预扣越多；全失败 = 账户门槛问题。')
+  probeOut.value = lines.join('\n')
+  probing2.value = false
+}
 const modelsError = ref('')
 const testing = ref(false)
 const testResult = ref('')
@@ -607,6 +692,19 @@ function onDragEnd(e: PointerEvent) {
 .save-profile-row { display: flex; gap: 6px; margin-bottom: 12px; }
 .profile-name-input { flex: 1; border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 7px 10px; font-size: 12.5px; outline: none; }
 .profile-name-input:focus { border-color: #999; }
+.s-hint {
+  margin: 4px 0 10px; font-size: 11.5px; line-height: 1.65;
+  color: var(--r-ink2, #9aa0a6);
+}
+.act-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
+}
+.act-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--r-ink, #1f2328); }
+.act-done { margin: 8px 0 0; font-size: 12.5px; color: var(--r-ink2, #6b7280); }
+
 .models-error { color: #b05a4a; font-size: 12px; margin: 6px 0; }
 .models-grid { display: flex; flex-wrap: wrap; gap: 5px; max-height: 120px; overflow-y: auto; padding: 8px; background: #fafafa; border-radius: 8px; margin: 6px 0; }
 .model-item { border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent); background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); border-radius: 10px; padding: 3px 9px; font-size: 11px; cursor: pointer; }

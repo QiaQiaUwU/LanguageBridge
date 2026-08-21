@@ -90,6 +90,12 @@ export interface WordItem {
   };
 
   aiEnrichedAt?: string;
+
+  /**
+   * 用户自己给这个词记的笔记（练习卡片上那个「笔记」按钮写的）。
+   * 跟 memory_tips 分开：那个是 AI 补的记忆法，这个是人写的。
+   */
+  userNote?: string;
 }
 
 export interface WordGroup {

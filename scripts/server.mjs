@@ -16,7 +16,7 @@
  */
 import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, extname, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -310,15 +310,95 @@ function ensureDepsInstalled() {
   const currentHash = hashFiles(relevant)
   const previousHash = existsSync(DEPS_HASH_FILE) ? readFileSync(DEPS_HASH_FILE, 'utf-8').trim() : null
 
-  const needInstall = !existsSync(nodeModules) || currentHash !== previousHash
+  /**
+   * 除了比哈希，还要逐个确认 dependencies 里的包真的躺在 node_modules 里。
+   *
+   * 只比 package.json 的哈希有个漏洞：更新代码包时 deps-hash 文件常常跟着一起被
+   * 覆盖成新的，于是"哈希没变"，但新加的依赖其实一个都没装 —— 表现就是运行时
+   * 报「没有安装 xxx，先运行 npm install」，而启动脚本还在说"依赖已是最新"。
+   */
+  /**
+   * 强制安装标记。
+   *
+   * 只靠 package.json 的哈希有个洞：更新代码包时 deps-hash 文件常常被一起覆盖成
+   * 新值，于是"哈希没变"，新加的依赖一个都没装。scripts/deps-version.txt 里是
+   * 一个手动递增的数字，只要它比上次记录的大，就无条件跑一次 npm install。
+   */
+  let forceByVersion = false
+  try {
+    const vf = join(ROOT, 'scripts', 'deps-version.txt')
+    const stamp = join(ROOT, 'node_modules', '.lb-deps-version')
+    if (existsSync(vf)) {
+      const want = readFileSync(vf, 'utf-8').trim()
+      const have = existsSync(stamp) ? readFileSync(stamp, 'utf-8').trim() : ''
+      if (want && want !== have) forceByVersion = true
+    }
+  } catch {
+    /* 读不到就交给下面的判断 */
+  }
+
+  let missing = []
+  try {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'))
+    const names = Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })
+    missing = names.filter(n => !existsSync(join(nodeModules, ...n.split('/'))))
+  } catch {
+    /* package.json 读不了的话交给下面的哈希判断 */
+  }
+
+  const needInstall =
+    !existsSync(nodeModules) || currentHash !== previousHash || missing.length > 0 || forceByVersion
 
   if (!needInstall) {
     console.log('依赖已是最新，跳过安装')
+    // 拷贝要放在 return 前面：依赖没变但 public/ort 可能还是空的
+    // （比如上一版没有这一步、或者 public 被清理过）
+    ensureOrtAssets()
     return
+  }
+  if (forceByVersion) console.log('这一版更新了依赖，强制安装一次')
+  if (missing.length) {
+    console.log(`检测到缺少依赖：${missing.slice(0, 6).join('、')}${missing.length > 6 ? ` 等 ${missing.length} 个` : ''}`)
   }
   console.log('检测到依赖需要安装/更新，正在执行 npm install（可能需要一些时间）...')
   runNpmCommand(['install', '--no-audit', '--no-fund'], 'npm install')
   writeFileSync(DEPS_HASH_FILE, currentHash)
+  ensureOrtAssets()
+  try {
+    const vf = join(ROOT, 'scripts', 'deps-version.txt')
+    if (existsSync(vf)) {
+      writeFileSync(join(ROOT, 'node_modules', '.lb-deps-version'), readFileSync(vf, 'utf-8').trim())
+    }
+  } catch {
+    /* 记不上不影响这次安装，下次会再装一遍 */
+  }
+}
+
+/**
+ * 把 onnxruntime-web 的 dist 拷一份到 public/ort/。
+ *
+ * 对轴要在 Worker 里 importScripts 运行时。走 CDN 的话网络不通就用不了
+ * （jsdelivr / unpkg 在某些网络下连不上），拷到本地就彻底不依赖外网。
+ * 只在缺文件时拷，已有就跳过。
+ */
+function ensureOrtAssets() {
+  try {
+    const src = join(ROOT, 'node_modules', 'onnxruntime-web', 'dist')
+    const dest = join(ROOT, 'public', 'ort')
+    if (!existsSync(src)) return
+    if (existsSync(join(dest, 'ort.min.js'))) return
+    mkdirSync(dest, { recursive: true })
+    let n = 0
+    for (const f of readdirSync(src)) {
+      // 只要运行时和 wasm，其余（.d.ts、map）不用
+      if (!/\.(js|mjs|wasm)$/.test(f)) continue
+      copyFileSync(join(src, f), join(dest, f))
+      n++
+    }
+    if (n) console.log(`已把语音对齐运行时拷到 public/ort/（${n} 个文件），之后离线可用`)
+  } catch (e) {
+    console.log('拷贝对齐运行时失败（不影响其他功能）:', e && e.message ? e.message : e)
+  }
 }
 
 /** 构建产物是否需要更新：全部源码文件的内容哈希变了才重新构建 */
@@ -405,6 +485,9 @@ async function isOurServer(p) {
 }
 
 function openBrowser(url) {
+  // Electron 壳里由它自己开窗口，不要再弹一个浏览器出来
+  if (process.env.LB_NO_OPEN_BROWSER === '1') return
+
   const platform = process.platform
   if (platform === 'win32') {
     /**
@@ -642,6 +725,9 @@ async function main() {
 
   server.listen(port, '0.0.0.0', () => {
     const url = `http://127.0.0.1:${port}`
+    // 每次成功监听都把端口写下来：Electron 壳靠这个文件找服务，
+    // 只在换端口时写的话，壳可能读到上一次的旧端口。
+    try { writeFileSync(PORT_FILE, String(port)) } catch { /* 写不了不影响本次运行 */ }
     const lanIp = getLocalIP()
     console.log('========================================')
     console.log(`LanguageBridge 已启动：${url}`)

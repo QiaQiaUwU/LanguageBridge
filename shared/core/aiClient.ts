@@ -50,6 +50,20 @@ async function callViaProxy(req: ProxyRequest, timeoutMs = 60_000): Promise<any>
     if (res.status === 401) hint = '（API Key 不对，401 未授权）'
     else if (res.status === 403) hint = '（没有权限访问，403）'
     else if (res.status === 404) hint = '（接口地址不对，404——多数中转站 Base URL 要以 /v1 结尾）'
+
+    /**
+     * 预扣费类的 403 要把本次实际发出去的 max_tokens 带上。
+     *
+     * 中转站按 max_tokens 预扣费，这个参数我改过好几轮却一直查不清 ——
+     * 因为报错里只有"需要预扣 ¥600"，看不出我们到底发了多少。
+     * 把实发值打出来，一眼就能分辨是「没发/发大了」还是「构建没更新」。
+     */
+    const sent = (req.payload as any)?.max_tokens
+    if (/预扣费|额度|quota|balance/i.test(String(msg))) {
+      hint += `（本次实际发出的 max_tokens = ${sent ?? '未发送'}${
+        sent ? '' : '——服务商会按它自己的默认上限预扣费，这就是要扣几百块的原因'
+      }）`
+    }
     throw new AiError(`调用失败(${res.status})${hint}：${msg}`)
   }
   return data
@@ -58,7 +72,7 @@ async function callViaProxy(req: ProxyRequest, timeoutMs = 60_000): Promise<any>
 export async function askAi(
   prompt: string,
   system?: string,
-  maxTokens = 2000,
+  maxTokens = 4000,
   timeoutMs = 60_000
 ): Promise<string> {
   if (!isAiConfigured()) {
@@ -70,7 +84,7 @@ export async function askAi(
   if (aiSettings.provider === 'anthropic') {
     return askAnthropic(prompt, system, maxTokens, timeoutMs)
   }
-  return askOpenAiCompatible(prompt, system, timeoutMs)
+  return askOpenAiCompatible(prompt, system, timeoutMs, maxTokens)
 }
 
 export interface AiTool {
@@ -191,7 +205,7 @@ async function openAiToolLoop(
   return { text: '（工具调用轮数太多，没能给出最终总结，但上面的操作已经执行了）', toolCalls }
 }
 
-async function askAnthropic(prompt: string, system?: string, maxTokens = 2000, timeoutMs = 60_000): Promise<string> {
+async function askAnthropic(prompt: string, system?: string, maxTokens = 4000, timeoutMs = 60_000, heavy = false): Promise<string> {
   const data = await callViaProxy({
     url: `${aiSettings.baseUrl.replace(/\/$/, '')}/v1/messages`,
     headers: {
@@ -200,7 +214,7 @@ async function askAnthropic(prompt: string, system?: string, maxTokens = 2000, t
       'anthropic-version': '2023-06-01'
     },
     payload: {
-      model: aiSettings.model,
+      model: heavy ? modelForHeavyTask() : aiSettings.model,
       max_tokens: maxTokens,
       system: system || undefined,
       messages: [{ role: 'user', content: prompt }]
@@ -209,7 +223,13 @@ async function askAnthropic(prompt: string, system?: string, maxTokens = 2000, t
   return (data.content || []).map((c: any) => c.text || '').join('').trim()
 }
 
-async function askOpenAiCompatible(prompt: string, system?: string, timeoutMs = 60_000): Promise<string> {
+async function askOpenAiCompatible(
+  prompt: string,
+  system?: string,
+  timeoutMs = 60_000,
+  maxTokens = 4000,
+  heavy = false
+): Promise<string> {
   const data = await callViaProxy({
     url: `${aiSettings.baseUrl.replace(/\/$/, '')}/chat/completions`,
     headers: {
@@ -217,15 +237,53 @@ async function askOpenAiCompatible(prompt: string, system?: string, timeoutMs = 
       Authorization: `Bearer ${aiSettings.apiKey}`
     },
     payload: {
-      model: aiSettings.model,
+      model: heavy ? modelForHeavyTask() : aiSettings.model,
       stream: false,
+      /**
+       * max_tokens 必须发，而且要给一个合理值。
+       *
+       * 这个参数被我来回改过三次，记录一下每次为什么错：
+       *  1. 一开始不发 —— 中转站按它自己的默认上限（十万级）**预扣费**，
+       *     四句话的请求也要预扣 ¥600，余额不够直接 403。
+       *  2. 补上但给了 2000 —— 那时 chunkRaw 会把整篇几万字当成一块送进来，
+       *     2000 装不下输出，模型返回空。
+       *  3. 现在 chunkRaw 已经保证每块 ≤5000 字，4000 tokens 足够放下
+       *     一块的 EN/ZH 配对，预扣费也只有几块钱。
+       */
+      max_tokens: maxTokens,
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
         { role: 'user', content: prompt }
       ]
     }
   }, timeoutMs)
-  return data.choices?.[0]?.message?.content?.trim() || ''
+  /**
+   * 空回复必须说清原因，不能默默返回 ''。
+   *
+   * 之前是 `content?.trim() || ''`，于是三种完全不同的情况都变成空串：
+   *  - 推理类模型把正文放在 reasoning_content，content 本来就是空的
+   *  - token 被思考过程吃光，finish_reason = 'length'
+   *  - 服务商返回 200 但结构不一样
+   * 上层只能报「AI 实际返回的开头是：（空）」，根本没法查。
+   */
+  const choice = data.choices?.[0]
+  const m = choice?.message || {}
+  const content = (m.content || '').trim()
+  if (content) return content
+
+  const reasoning = (m.reasoning_content || m.reasoning || '').trim()
+  if (reasoning) return reasoning
+
+  const finish = choice?.finish_reason || '未知'
+  if (finish === 'length') {
+    throw new AiError(
+      '模型输出被长度上限截断，一个字都没返回（finish_reason=length）。' +
+      '多半是该模型输出上限太小，或思考过程吃光了配额——换个模型，或把待处理段落调小。'
+    )
+  }
+  throw new AiError(
+    `模型返回空内容（finish_reason=${finish}）。实际结构：${JSON.stringify(data).slice(0, 300)}`
+  )
 }
 
 export async function askAiWithImage(base64Data: string, mimeType: string, prompt: string): Promise<string> {

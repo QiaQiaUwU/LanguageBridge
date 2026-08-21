@@ -8,6 +8,7 @@ export type PracticeMode =
   | 'dictationOnly' // 只默写
   | 'listenOnly'    // 只听写
   | 'review'        // 只复习旧词（自测→听写→默写）
+  | 'shuffle'       // 随机复习：新词旧词混在一起，全部默写
 
 export type PracticeType = 'followWrite' | 'spell' | 'identify' | 'listen' | 'dictation'
 
@@ -67,6 +68,12 @@ export interface StudySettings {
     showTip: string
     replaySound: string
     skipWord: string
+    /** 标记/取消「已掌握」，对应 TypeWords 的 ToggleSimple（它默认是 `） */
+    toggleMastered: string
+    /** 把这个词收藏进某个词表，对应它的 ToggleCollect */
+    collectWord: string
+    /** 给这个词写笔记 */
+    editNote: string
   }
   articleAutoPlayNext: boolean
   articleSoundVolume: number
@@ -74,6 +81,10 @@ export interface StudySettings {
 
   scenarioEvery: number
   autoMarkStatus: boolean
+
+  /** 卡片消消乐：一页放多少对、要不要打乱顺序 */
+  matchPairsPerPage: number
+  matchShuffle: boolean
   statusKnownLimit: number
   statusFuzzyLimit: number
 }
@@ -99,7 +110,7 @@ export const DEFAULT_STUDY_SETTINGS: StudySettings = {
   inputWrongClear: false,
   ignoreCase: true,
   allowSpellVariant: true,
-  repeatCount: 1,
+  repeatCount: 1,   // 100 = 用 repeatCustomCount，跟 TypeWords 的哨兵值一致
   repeatCustomCount: 3,
   ignoreSymbol: false,
   identifyMethod: 'self',
@@ -109,7 +120,7 @@ export const DEFAULT_STUDY_SETTINGS: StudySettings = {
   wordSoundSpeed: 1,
   wordSoundVolume: 100,
   keyboardSound: true,
-  keyboardSoundFile: 'mechanical',
+  keyboardSoundFile: '机械键盘2',   // 对齐 TypeWords 的 SoundFileOptions，用别的值会落到合成音兜底
   keyboardSoundVolume: 100,
   effectSound: true,
   effectSoundVolume: 100,
@@ -135,7 +146,12 @@ export const DEFAULT_STUDY_SETTINGS: StudySettings = {
   shortcutKeyMap: {
     showTip: 'Tab',
     replaySound: 'Ctrl+KeyP',
-    skipWord: 'Escape'
+    skipWord: 'Escape',
+    // 上游 ToggleSimple 就是 `，直接照搬；收藏它用 Enter，但 Enter 在默写模式
+    // 是提交键，会打架，所以换成 Ctrl+D。笔记上游没给快捷键，这里补一个。
+    toggleMastered: 'Backquote',
+    collectWord: 'Ctrl+KeyD',
+    editNote: 'Ctrl+KeyN'
   },
   articleAutoPlayNext: true,
   articleSoundVolume: 100,
@@ -143,6 +159,8 @@ export const DEFAULT_STUDY_SETTINGS: StudySettings = {
 
   scenarioEvery: 30,
   autoMarkStatus: true,
+  matchPairsPerPage: 10,
+  matchShuffle: true,
   statusKnownLimit: 0,
   statusFuzzyLimit: 2
 }
@@ -174,7 +192,9 @@ export const MODE_STAGES: Record<PracticeMode, PracticeStage[]> = {
     'dictationReview',
     'complete'
   ],
-  review: ['identifyReview', 'listenReview', 'dictationReview', 'complete']
+  review: ['identifyReview', 'listenReview', 'dictationReview', 'complete'],
+  // 对应上游的 WordPracticeMode.Shuffle：只有一个 Shuffle 阶段
+  shuffle: ['shuffle', 'complete']
 }
 
 export const STAGE_NAMES: Record<PracticeStage, string> = {

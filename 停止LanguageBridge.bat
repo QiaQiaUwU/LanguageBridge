@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 title Stop LanguageBridge
 cd /d "%~dp0"

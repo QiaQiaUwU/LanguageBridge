@@ -160,6 +160,7 @@
         <button class="seg-btn" :class="{ on: viewMode === 'list' }" @click="viewMode = 'list'">列表模式</button>
       </div>
       <button class="dark-btn" @click="openScope('dictation')">听写</button>
+      <button class="dark-btn" @click="openScope('match')">卡片消消乐</button>
       <button class="dark-btn" @click="openScope('flashcard')">卡片背单词</button>
       <button class="ghost-btn" :title="globalReveal ? '隐藏全部释义' : '显示全部释义'" @click="globalReveal = !globalReveal">
         {{ globalReveal ? '遮住释义' : '显示释义' }}
@@ -247,7 +248,6 @@
           <button class="ghost-btn small" :disabled="dedupingWords" @click="doDedupeWords">
             {{ dedupingWords ? '清理中…' : '清理重复词条' }}
           </button>
-          <span class="hint">如果同一个词积累了好几份记录，点这个合并成一份（自动保留信息更完整的那份，不会丢释义）</span>
         </div>
         <p v-if="dedupeMessage" class="import-msg">{{ dedupeMessage }}</p>
       </div>
@@ -260,6 +260,7 @@
       v-if="scopeDialogFor"
       :total="filteredWords.length"
       :page="currentPage"
+      :title="scopeDialogTitle"
       @choose="onScopeChosen"
       @cancel="scopeDialogFor = null"
     />
@@ -462,28 +463,45 @@ function clearFamilyFilter() {
   currentPage.value = 1
 }
 
-type DimKey = 'exam' | 'topic' | 'morpheme'
+/**
+ * 筛选维度。
+ *
+ * 词根、前缀、后缀原来挤在一个 morpheme 维度里 —— 三类东西混一张表，
+ * 几百项排下来根本找不到想要的。拆成三个各管各的。
+ * 老数据里存的 'morpheme' 仍然认（当成词根），不然升级后筛选条件会丢。
+ */
+type DimKey = 'exam' | 'topic' | 'root' | 'prefix' | 'suffix'
 
 const DIM_PREVIEW = 14
 const activeDim = ref<DimKey>('exam')
 const DIM_SEL_KEY = 'lb-wordcore-dimsel'
 function readDimSel(): Record<DimKey, string> {
+  const empty: Record<DimKey, string> = { exam: '', topic: '', root: '', prefix: '', suffix: '' }
   try {
     const raw = localStorage.getItem(DIM_SEL_KEY)
     const v = raw ? JSON.parse(raw) : null
-    return { exam: v?.exam || '', topic: v?.topic || '', morpheme: v?.morpheme || '' }
+    if (!v) return empty
+    return {
+      exam: v.exam || '',
+      topic: v.topic || '',
+      // 老数据只有一个 morpheme 槽，分不出是词根还是词缀，一律当词根收下
+      root: v.root || v.morpheme || '',
+      prefix: v.prefix || '',
+      suffix: v.suffix || ''
+    }
   } catch {
-    return { exam: '', topic: '', morpheme: '' }
+    return empty
   }
 }
 const dimSel = ref<Record<DimKey, string>>(readDimSel())
 watch(dimSel, v => {
   try { localStorage.setItem(DIM_SEL_KEY, JSON.stringify(v)) } catch { /* 隐私模式忽略 */ }
 }, { deep: true })
-const activeDimSaved = localStorage.getItem('lb-wordcore-dim') as DimKey | null
-if (activeDimSaved === 'exam' || activeDimSaved === 'topic' || activeDimSaved === 'morpheme') {
-  activeDim.value = activeDimSaved
-}
+const activeDimSaved = localStorage.getItem('lb-wordcore-dim')
+// 老数据存的是 'morpheme'，拆分之后当词根处理，不让升级后筛选条件丢掉
+const DIM_KEYS: DimKey[] = ['exam', 'topic', 'root', 'prefix', 'suffix']
+if (activeDimSaved === 'morpheme') activeDim.value = 'root'
+else if (DIM_KEYS.includes(activeDimSaved as DimKey)) activeDim.value = activeDimSaved as DimKey
 watch(activeDim, v => localStorage.setItem('lb-wordcore-dim', v))
 const activeDimValue = computed<string>({
   get: () => dimSel.value[activeDim.value],
@@ -504,41 +522,55 @@ function collectDim(key: DimKey): DimValue[] {
     } else {
       const m = w.morphemes
       if (!m) continue
-      for (const part of [m.prefix, m.root, m.suffix]) {
-        if (!part?.form) continue
-        count.set(part.form, (count.get(part.form) || 0) + 1)
-        if (part.meaning && !meaning.has(part.form)) meaning.set(part.form, part.meaning)
-      }
+      // 只取这个维度对应的那一类词素
+      const part = key === 'prefix' ? m.prefix : key === 'suffix' ? m.suffix : m.root
+      if (!part?.form) continue
+      count.set(part.form, (count.get(part.form) || 0) + 1)
+      if (part.meaning && !meaning.has(part.form)) meaning.set(part.form, part.meaning)
     }
   }
   return [...count.entries()]
-    .filter(([, c]) => (key === 'morpheme' ? c > 1 : true))
+    // 词素类的维度过滤掉只出现一次的：一个词独有的词根列出来没有意义
+    .filter(([, c]) => (key === 'exam' || key === 'topic' ? true : c > 1))
     .map(([name, c]) => ({ name, count: c, meaning: meaning.get(name) }))
     .sort((a, b) => b.count - a.count)
 }
 
 const examValues = computed(() => collectDim('exam'))
 const topicValues = computed(() => collectDim('topic'))
-const morphemeValues = computed(() => collectDim('morpheme'))
+const rootValues = computed(() => collectDim('root'))
+const prefixValues = computed(() => collectDim('prefix'))
+const suffixValues = computed(() => collectDim('suffix'))
 
 const dimensions = computed(() => [
   { key: 'exam' as DimKey, label: '考试', count: examValues.value.length },
   { key: 'topic' as DimKey, label: '话题', count: topicValues.value.length },
-  { key: 'morpheme' as DimKey, label: '词根词缀', count: morphemeValues.value.length }
+  { key: 'root' as DimKey, label: '词根', count: rootValues.value.length },
+  { key: 'prefix' as DimKey, label: '前缀', count: prefixValues.value.length },
+  { key: 'suffix' as DimKey, label: '后缀', count: suffixValues.value.length }
 ])
 
 const hasAnyDimension = computed(() => dimensions.value.some(d => d.count > 0))
 
 const currentDimValues = computed<DimValue[]>(() => {
-  if (activeDim.value === 'topic') return topicValues.value
-  if (activeDim.value === 'morpheme') return morphemeValues.value
-  return examValues.value
+  switch (activeDim.value) {
+    case 'topic': return topicValues.value
+    case 'root': return rootValues.value
+    case 'prefix': return prefixValues.value
+    case 'suffix': return suffixValues.value
+    default: return examValues.value
+  }
 })
+
+/** 词素类维度不能手动增删改 —— 那是从词库结构里算出来的 */
+const isMorphemeDim = computed(() =>
+  activeDim.value === 'root' || activeDim.value === 'prefix' || activeDim.value === 'suffix'
+)
 const visibleDimValues = computed(() =>
   expandDim.value ? currentDimValues.value : currentDimValues.value.slice(0, DIM_PREVIEW)
 )
 
-const DIM_LABEL: Record<DimKey, string> = { exam: '考试', topic: '话题', morpheme: '词根词缀' }
+const DIM_LABEL: Record<DimKey, string> = { exam: '考试', topic: '话题', root: '词根', prefix: '前缀', suffix: '后缀' }
 const activeFilters = computed(() =>
   (Object.keys(dimSel.value) as DimKey[])
     .filter(k => dimSel.value[k])
@@ -570,7 +602,7 @@ function cancelPress() {
 }
 
 async function addDimValue() {
-  if (activeDim.value === 'morpheme') { manageMsg.value = '词根词缀是结构化数据，不能手动新建。'; return }
+  if (isMorphemeDim.value) { manageMsg.value = '词根、前缀、后缀是从词库结构里算出来的，不能手动新建。'; return }
   const ids = [...selectedIds.value]
   if (!ids.length) {
     manageMsg.value = '先在下面勾选要归入这个分类的词（点「选择单词」），再回来新建。'
@@ -622,7 +654,7 @@ function setListOf(w: WordItem, next: string[]) {
 }
 
 async function renameDimValue(from: string) {
-  if (activeDim.value === 'morpheme') { manageMsg.value = '词根词缀是结构化数据，不在这里改。'; return }
+  if (isMorphemeDim.value) { manageMsg.value = '词根、前缀、后缀是从词库结构里算出来的，不在这里改。'; return }
   const to = prompt(`把分类「${from}」改成：`, from.split(REPLACEMENT_CHAR).join(''))
   if (to === null) return
   const next = to.trim()
@@ -647,7 +679,7 @@ async function renameDimValue(from: string) {
 }
 
 async function deleteDimValue(name: string) {
-  if (activeDim.value === 'morpheme') { manageMsg.value = '词根词缀是结构化数据，不在这里删。'; return }
+  if (isMorphemeDim.value) { manageMsg.value = '词根、前缀、后缀是从词库结构里算出来的，不在这里删。'; return }
   const hit = currentDimValues.value.find(v => v.name === name)
   if (!confirm(`从 ${hit?.count ?? 0} 个词条上去掉分类「${name}」？\n只去掉这个分类，词条本身不会删。`)) return
   tidying.value = true
@@ -689,13 +721,20 @@ function matchOne(w: WordItem, key: DimKey, v: string): boolean {
   if (!v) return true
   if (key === 'exam') return !!w.tags?.includes(v)
   if (key === 'topic') return !!w.topics?.includes(v)
+  // 拆分之后各查各的：选了前缀 re- 就只看前缀，不会因为后缀同名也命中
   const m = w.morphemes
-  return !!m && [m.prefix?.form, m.root?.form, m.suffix?.form].includes(v)
+  if (!m) return false
+  const part = key === 'prefix' ? m.prefix : key === 'suffix' ? m.suffix : m.root
+  return part?.form === v
 }
 
 function matchDim(w: WordItem): boolean {
   const s = dimSel.value
-  return matchOne(w, 'exam', s.exam) && matchOne(w, 'topic', s.topic) && matchOne(w, 'morpheme', s.morpheme)
+  return matchOne(w, 'exam', s.exam)
+    && matchOne(w, 'topic', s.topic)
+    && matchOne(w, 'root', s.root)
+    && matchOne(w, 'prefix', s.prefix)
+    && matchOne(w, 'suffix', s.suffix)
 }
 
 function studyFiltered() {
@@ -741,11 +780,25 @@ const filteredWords = computed<WordItem[]>(() => {
   }
   const q = wordStore.searchQuery.trim().toLowerCase()
   if (q) {
-    list = list.filter(
-      w =>
-        w.word.toLowerCase().includes(q) ||
-        w.meanings?.some(m => m.chinese?.includes(q))
-    )
+    // 除了词形和释义，也认词根词缀 —— 搜 spect 要能捞出
+    // inspect / respect / spectator 这一族
+    list = list.filter(w => {
+      const lw = w.word.toLowerCase()
+      // 单个字母 = 按首字母找；两个字母以上 = 全文包含
+      if (q.length === 1 && /[a-z]/.test(q)) {
+        if (lw.startsWith(q)) return true
+      } else if (lw.includes(q)) {
+        return true
+      }
+      if (w.meanings?.some(m => m.chinese?.includes(q))) return true
+      const mo = w.morphemes
+      if (mo) {
+        for (const part of [mo.prefix, mo.root, mo.suffix]) {
+          if (part?.form && part.form.toLowerCase().includes(q)) return true
+        }
+      }
+      return false
+    })
   }
   if (order.value === 'shuffle1') list = seededShuffle(list, 12345)
   else if (order.value === 'shuffle2') list = seededShuffle(list, 67890)
@@ -968,10 +1021,17 @@ function onSelectGraphWord(word: string) {
   if (item) focusWord(item)
 }
 
-const scopeDialogFor = ref<null | 'dictation' | 'flashcard'>(null)
+const scopeDialogFor = ref<null | 'dictation' | 'flashcard' | 'match'>(null)
 const flashcardWords = ref<WordItem[] | null>(null)
 
-function openScope(kind: 'dictation' | 'flashcard') {
+const scopeDialogTitle = computed(() => {
+  if (scopeDialogFor.value === 'dictation') return '听写：选择范围'
+  if (scopeDialogFor.value === 'flashcard') return '卡片背单词：选择范围'
+  if (scopeDialogFor.value === 'match') return '卡片消消乐：选择范围'
+  return ''
+})
+
+function openScope(kind: 'dictation' | 'flashcard' | 'match') {
   if (!filteredWords.value.length) return
   scopeDialogFor.value = kind
 }
@@ -991,7 +1051,7 @@ function onScopeChosen(scope: 'page' | 'pageAfter' | 'all') {
     flashcardWords.value = list
   } else {
     wordStore.setStudyList(list)
-    router.push('/dictation')
+    router.push(kind === 'match' ? '/match' : '/dictation')
   }
 }
 
@@ -1056,6 +1116,10 @@ onMounted(async () => {
 </script>
 
 <style lang="scss" scoped>
+
+/* 这几个类之前一直没有样式 —— 全项扫描时才发现 */
+.manage-hint { font-size: 12px; color: var(--r-ink2, #9aa0a6); line-height: 1.6; }
+.cards { display: block; width: 100%; }
 .word-core {
   max-width: 1440px;
   margin: 0 auto;

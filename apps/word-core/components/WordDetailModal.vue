@@ -266,7 +266,7 @@
             </div>
             <div class="stat-card">
               <span class="stat-label">下次复习</span>
-              <span class="stat-value">{{ formatDate(word.learningRecord?.nextReview) }}</span>
+              <span class="stat-value">{{ formatDate(nextReviewDate) }}</span>
             </div>
           </div>
 
@@ -300,6 +300,7 @@ import { ref, computed } from 'vue'
 import type { WordItem } from '@/shared/types/WordItem'
 import { playWord, playSentence, stopAll } from '@/shared/core/audio'
 import { useWordStore } from '@/shared/stores/wordStore'
+import { nextReviewOf } from '@/shared/core/fsrs'
 
 const wordStore = useWordStore()
 
@@ -348,6 +349,13 @@ async function saveEdit() {
 }
 
 const isSpeaking = ref(false)
+/**
+ * 下次复习：读 FSRS 的卡片，没有卡片才回退到词条上那份。
+ * 之前直接读 word.learningRecord.nextReview，那是听写那套固定间隔表写的，
+ * 跟今日复习实际挑词用的 FSRS 排期不是一回事。
+ */
+const nextReviewDate = computed(() => nextReviewOf(props.word))
+
 const isMemorized = computed(() => (props.word.learningRecord?.familiarity || 0) >= 80)
 
 const hasMorphology = computed(() => {

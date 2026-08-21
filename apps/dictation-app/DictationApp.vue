@@ -73,7 +73,7 @@
     <div v-else-if="phase === 'listening'" class="listen-panel">
       <div class="run-head">
         <span>{{ listenIndex + 1 }} / {{ listenList.length }}</span>
-        <button class="quit-btn" @click="phase = 'setup'">退出</button>
+        <button class="quit-btn" title="不结算，已经答过的记录保留" @click="quitSession">退出</button>
       </div>
       <div class="progress-bar"><div class="fill" :style="{ width: listenPercent + '%' }"></div></div>
 
@@ -110,10 +110,19 @@
       </div>
 
       <template v-if="viewMode === 'word'">
+        <div v-if="lastResult" class="prev-result" :class="{ ok: lastResult.ok }">
+          <span class="pr-arrow">←</span>
+          <span class="pr-word">
+            <span v-for="(r, i) in lastResult.runs" :key="i" :class="r.ok ? 'r-ok' : 'r-bad'">{{ r.text }}</span>
+          </span>
+          <span class="pr-hint">{{ lastResult.hint }}</span>
+        </div>
+
         <div class="wm-area">
-          <button class="wm-speak" title="再听一遍" @click="playCurrent">
+          <button class="wm-speak" title="再听一遍" @click="checkIsWrong(); playCurrent()">
             <svg viewBox="0 0 24 24" width="30" height="30"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
           </button>
+
           <div v-if="dictSet.translate" class="wm-cn" :style="{ fontSize: dictSet.fontSize + 'px' }">
             <div v-for="(g, i) in currentPosGroups" :key="i" class="pos-row">
               <span class="pos">{{ g.pos }}</span>
@@ -139,18 +148,11 @@
             </button>
           </div>
 
-          <div v-if="answered" class="wm-fb" :class="lastCorrect ? 'ok' : 'bad'">
-            <span class="fb-word">{{ current?.word }}</span>
-            <span v-if="dictSet.showPhonetic && current?.phonetic" class="fb-ph">{{ current?.phonetic }}</span>
-            <template v-if="!lastCorrect && userInput.trim()">
-              <span class="fb-yours">你写的：{{ userInput }}</span>
-            </template>
-            <span v-if="dictSet.showExample && sentences[0]" class="fb-eg">{{ sentences[0] }}</span>
-          </div>
+
 
           <div class="wm-controls">
             <button class="icon-round" title="上一个" :disabled="currentIndex === 0" @click="prevWord">‹</button>
-            <button class="icon-round play" title="发音" @click="playCurrent">▶</button>
+            <button class="icon-round play" title="发音" @click="checkIsWrong(); playCurrent()">▶</button>
             <button class="icon-round" title="跳过" @click="giveUp">↻</button>
           </div>
         </div>
@@ -323,7 +325,7 @@
         <button class="a-btn wb" @click="goWrongBook">查看错词本</button>
         <button class="a-btn again" @click="startSession(session)">再来一次</button>
         <button class="a-btn cont" :disabled="!hasMoreToDictate" @click="continueNext">继续听写</button>
-        <button class="a-btn quit" @click="phase = 'setup'">退出</button>
+        <button class="a-btn quit" @click="quitSession">退出</button>
       </div>
     </div>
   </div>
@@ -341,6 +343,9 @@ import { recordReview, getRecentStats } from '@/shared/core/activityLog'
 import { addTodo } from '@/shared/core/studyTodos'
 import type { WordItem } from '@/shared/types/WordItem'
 import ListeningMaterialsTab from './components/ListeningMaterialsTab.vue'
+import { startStudyClock, stopStudyClock } from '@/shared/core/studyClock'
+import { nextReviewOf } from '@/shared/core/fsrs'
+import { loadFsrsData } from '@/shared/core/fsrs'
 
 const wordStore = useWordStore()
 const router = useRouter()
@@ -453,8 +458,13 @@ const candidateFromFilters = computed<WordItem[]>(() => {
     list = list.filter(w => idset.has(w.id))
   }
   if (selStatus.value === 'due') {
+    // 到期与否只认 FSRS（nextReviewOf 内部会回退到老数据），
+    // 跟今日复习挑词、单词详情显示的是同一个日期
     const now = new Date().toISOString()
-    list = list.filter(w => w.learningRecord?.nextReview && w.learningRecord.nextReview <= now)
+    list = list.filter(w => {
+      const due = nextReviewOf(w)
+      return due && due <= now
+    })
   } else if (selStatus.value !== 'all') {
     const allowed = selStatus.value.split('+')
     list = list.filter(w => allowed.includes(w.status || 'unmarked'))
@@ -469,6 +479,32 @@ const currentIndex = ref(0)
 const userInput = ref('')
 const answered = ref(false)
 const lastCorrect = ref(false)
+
+/**
+ * 上一个词的作答结果，显示在左上角（爱听写 / 小语笔记都是这个位置）。
+ * 对了整词绿色；错了就在**出错的那个位置**标红，而不是整词一片红。
+ */
+interface PrevRun { text: string; ok: boolean }
+const lastResult = ref<{ word: string; hint: string; runs: PrevRun[]; ok: boolean } | null>(null)
+
+/** 逐字母比对，合并连续同结果的字母成段 */
+function diffRuns(typed: string, answer: string): PrevRun[] {
+  const st = getStudySettings()
+  const eq = (a: string, b: string) =>
+    st.ignoreCase ? a?.toLowerCase() === b?.toLowerCase() : a === b
+  const out: PrevRun[] = []
+  const len = Math.max(typed.length, answer.length)
+  for (let i = 0; i < len; i++) {
+    const ch = answer[i] ?? ''
+    // 少打的字母也算错位；多打的字母不显示（答案里没有）
+    const ok = i < typed.length && eq(typed[i], ch)
+    if (!ch) continue
+    const last = out[out.length - 1]
+    if (last && last.ok === ok) last.text += ch
+    else out.push({ text: ch, ok })
+  }
+  return out
+}
 const correctCount = ref(0)
 const wrongList = ref<{ word: WordItem; input: string }[]>([])
 const viewMode = ref<'word' | 'list'>((localStorage.getItem('lb-dict-view') as any) || 'word')
@@ -564,6 +600,14 @@ function startTimer() {
 }
 function stopTimer() { if (timerId) { clearInterval(timerId); timerId = null } }
 
+/** 未作答就去听发音，算一次错。不这么记的话可以靠反复点喇叭白嫖。 */
+function checkIsWrong() {
+  if (!current.value || answered.value) return
+  if (wrongList.value.some(w => w.word.id === current.value!.id)) return
+  wrongList.value.push({ word: current.value, input: userInput.value })
+  wordStore.recordDictationResult(current.value.id, false, userInput.value)
+}
+
 async function playCurrent() {
   if (!dictSet.value.audio || !current.value) return
   const w = current.value.word
@@ -627,6 +671,11 @@ function onTypedInput() {
 let autoNextTimer: ReturnType<typeof setTimeout> | null = null
 function submit() {
   if (!current.value || answered.value) return
+  // 一个字母都没输就回车不算一次作答。
+  // 少了这条：打对之后 next() 清空输入，而同一次回车的事件还在链上
+  // （或者手指没抬利索又触发一次），就拿空串去判，必然判错 ——
+  // 表现就是「第一个词之后每个词都自动判错」。
+  if (!userInput.value.trim()) return
   const ok = judge(userInput.value, current.value.word)
   lastCorrect.value = ok
   answered.value = true
@@ -641,18 +690,20 @@ function submit() {
     wrongList.value.push({ word: current.value, input: userInput.value })
     if (dictSet.value.mustRetype) { retypeInput.value = ''; nextTick(() => inputEl.value?.focus()) }
   }
+  lastResult.value = {
+    word: current.value.word,
+    hint: currentHint.value,
+    runs: ok ? [{ text: current.value.word, ok: true }] : diffRuns(userInput.value, current.value.word),
+    ok
+  }
   wordStore.recordDictationResult(current.value.id, ok, userInput.value)
   recordReview(ok)
   if (ok && dictSet.value.autoRemoveWrong) removeFromWrongBook(current.value.id)
 
-  // 打对直接进下一个，不停在「确定 → 看答案 → 下一个」那一屏。
-  // 打错才留下来：这时候才需要看正确拼写、听发音。
-  if (ok) {
-    answered.value = false
-    next()
-    return
-  }
-  playCurrent()
+  // 对错都直接进下一个，不停在检查页。
+  // 结果显示在左上角：对了整词绿，错了在错的那几个字母上标红。
+  answered.value = false
+  next()
 }
 
 function giveUp() {
@@ -719,6 +770,20 @@ function finishSession() {
   stopAll()
   addedToPlan.value = false
   getRecentStats(7).then(s => { recentAccuracy.value = s })
+}
+
+/**
+ * 中途退出：不结算。
+ *
+ * 一组词没听完就出结算页没有意义 —— 那个页面是给"这一轮做完了"看的。
+ * 但已经答过的那些要留住：错词该进错词本、对的该记复习，
+ * 只是不弹结算、不放完成音、不算这一轮的正确率。
+ */
+function quitSession() {
+  if (autoNextTimer) { clearTimeout(autoNextTimer); autoNextTimer = null }
+  stopTimer()
+  stopAll()
+  phase.value = 'setup'
 }
 
 function goWrongBook() { router.push('/wrong-book') }
@@ -847,6 +912,8 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   await wordStore.loadWords()
+  startStudyClock()   // 听写属于真正在练，计入学习时长
+  await loadFsrsData()   // 结果要写进 FSRS，先把卡片读进来，别只落到 localStorage 副本上
   window.addEventListener('keydown', onKey)
   if (sessionMode.value === 'spelling' && candidateWords.value.length) {
     startSession()
@@ -855,6 +922,7 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
+  stopStudyClock()
   window.removeEventListener('keydown', onKey)
   stopTimer()
   stopAll()
@@ -863,9 +931,15 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .dictation {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 28px 24px 60px;
+  --toolbar-width: 50rem;
+  width: 100%;
+  height: calc(100vh - var(--lb-main-pad, 24px) * 2);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+  padding: 0;
 }
 
 .back-btn {
@@ -1114,11 +1188,18 @@ onBeforeUnmount(() => {
   .dictation { padding: 14px 14px 40px; }
 }
 
-.run-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* 之前这里没写宽度，它只按内容撑开 —— 内层再怎么设 50rem 也没用，
+   看着就是窄窄一条。练习内容整体垂直居中。 */
+.run-panel {
+  flex: 1; min-height: 0; width: 100%;
+  display: flex; flex-direction: column; align-items: center;
+  position: relative;
+}
 .run-bar {
-  padding: 14px 24px 0;
+  width: min(var(--toolbar-width), 100%);
+  margin: 0 auto 22px;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 10px 0 14px; border-bottom: 1px solid var(--r-border, #e6e6e6); margin-bottom: 22px;
+  padding: 14px 0; border-bottom: 1px solid var(--r-border, #e6e6e6);
 }
 .run-stat {
   font-size: 13px; padding: 4px 10px; border-radius: 7px;
@@ -1134,29 +1215,60 @@ onBeforeUnmount(() => {
   &.danger:hover { background: #f7e7e3; color: #b05a4a; }
 }
 
+/* 上一个词的结果，钉在左上角。爱听写和小语笔记都是这个位置：
+   箭头 + 单词 + 释义，对了整词绿，错了只标错的那几个字母。 */
+.prev-result {
+  position: absolute; left: 1.25rem; top: 1.25rem;
+  display: flex; align-items: baseline; gap: 0.6rem;
+  font-size: 1.1rem; pointer-events: none; z-index: 5;
+}
+.pr-arrow { color: var(--r-ink2, #b8bec6); font-size: 1rem; }
+.pr-word { letter-spacing: 0.02em; font-weight: 500; }
+.r-ok { color: #3a8a5c; }
+.r-bad { color: #c0392b; }
+.pr-hint {
+  color: var(--r-ink2, #9aa0a6); font-size: 0.95rem;
+  max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 输入线落在页面竖直中线上：wm-area 占满剩余高度并居中对齐内容 */
 .wm-area {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: center;
-  width: min(680px, 88vw); margin: 0 auto; text-align: center;
+  width: min(var(--toolbar-width), 100%);
+  margin: 0 auto; text-align: center;
+  padding-bottom: 4rem;   /* 抵掉底部进度条的高度，让中线真的在正中 */
 }
+/* 数值同 TypeWord.vue：.translate 1.2rem，.pos min-width 2.5rem(min-w-10) */
 .wm-cn {
-  font-size: 26px; font-weight: 400; line-height: 1.6; margin: 0 0 56px;
-  color: var(--r-ink, #1f2328); text-align: left; max-width: 620px;
+  font-size: 1.6rem; font-weight: 500; line-height: 1.7; margin: 0 0 3rem;
+  color: var(--r-ink, #1f2328); text-align: center;
+  width: min(var(--toolbar-width), 100%);
 }
-.wm-cn .pos-row { display: flex; align-items: flex-start; }
-.wm-cn .pos { flex-shrink: 0; min-width: 3rem; color: var(--r-accent, #5b7a99); }
+/* 释义整体居中：每一行自己是 inline-flex，行内左对齐、整行在容器里居中 */
+.wm-cn .pos-row {
+  display: inline-flex; align-items: flex-start; gap: 0.5rem;
+  text-align: left;
+}
+.wm-cn .pos { flex-shrink: 0; color: var(--r-accent, #5b7a99); }
 .wm-cn .pos-text { flex: 1; min-width: 0; }
-.wm-input-wrap { display: flex; gap: 16px; justify-content: center; align-items: flex-end; }
+/* 输入区照 TypeWords：.dictation { border-bottom: 2px solid gray }，宽 w-120 = 30rem */
+.wm-input-wrap {
+  display: flex; gap: 1rem; justify-content: center; align-items: flex-end;
+  margin-top: 0.5rem;
+}
 .wm-input {
-  width: min(520px, 66vw); padding: 12px 4px; font-size: 34px; text-align: center;
-  border: none; border-bottom: 1px solid var(--r-border, #ddd);
+  width: min(30rem, 70vw); padding: 0.5rem 0.25rem;
+  font-size: 2rem; text-align: center; letter-spacing: 0.15rem;
+  border: none; border-bottom: 2px solid var(--r-border, #b9bec4);
   background: transparent; color: var(--r-ink, #1f2328); outline: none;
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-family: 'Segoe UI', 'PingFang SC', system-ui, sans-serif; font-weight: 300;
 }
 .wm-input:focus { border-bottom-color: var(--r-ink, #1f2328); }
-.wm-input:focus { border-color: var(--r-accent, #8a4b3a); }
-.wm-input.ok { border-color: #3a8a5c; background: color-mix(in srgb, #3a8a5c 10%, transparent); }
-.wm-input.bad { border-color: #b5493c; background: color-mix(in srgb, #b5493c 10%, transparent); }
+/* 只把下边线变色，不整个框刷红底。答错时正确拼写已经在下面显示了，
+   再糊一片红底既晃眼又没多给信息。 */
+.wm-input.ok { border-bottom-color: #3a8a5c; }
+.wm-input.bad { border-bottom-color: #b5493c; }
 .wm-ok {
   border: none; border-radius: 8px; padding: 11px 22px;
   font-size: 14px; cursor: pointer;
@@ -1164,13 +1276,7 @@ onBeforeUnmount(() => {
   &:hover:not(:disabled) { filter: brightness(1.25); }
   &:disabled { opacity: .4; cursor: default; }
 }
-.wm-fb { margin-top: 30px; font-size: 15px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-.wm-fb .fb-word { font-weight: 700; font-size: 22px; }
-.wm-fb.ok .fb-word { color: #3a8a5c; }
-.wm-fb.bad .fb-word { color: #b5493c; }
-.wm-fb .fb-ph { color: var(--r-ink2, #888); }
-.wm-fb .fb-yours { color: #b5493c; text-decoration: line-through; }
-.wm-controls { display: flex; gap: 22px; justify-content: center; align-items: center; margin-top: 52px; }
+.wm-controls { display: flex; gap: 1.5rem; justify-content: center; align-items: center; margin-top: 3rem; }
 .icon-round {
   width: 46px; height: 46px; border-radius: 50%; font-size: 19px; cursor: pointer;
   border: 1px solid var(--r-border, #ddd);
@@ -1180,9 +1286,14 @@ onBeforeUnmount(() => {
 .icon-round:hover:not(:disabled) { background: var(--r-ui, #f2f2f2); }
 .icon-round:disabled { opacity: 0.35; cursor: default; }
 .icon-round.play { background: var(--r-ink, #1f2328); border-color: transparent; color: #fff; }
+/* 进度条钉窗口底边，不跟着内容浮在中间 */
 .wm-progress {
-  width: min(900px, 92vw); margin: 0 auto; padding: 0 24px 20px;
+  position: sticky;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+  margin: auto auto 0;
+  width: min(var(--toolbar-width), 100%);
   display: flex; align-items: center; gap: 14px;
+  z-index: 20;
 }
 .wm-progress .progress-bar { flex: 1; }
 .wm-count { font-size: 13px; color: var(--r-ink2, #888); white-space: nowrap; }
@@ -1291,7 +1402,7 @@ onBeforeUnmount(() => {
 .sw:checked { background: var(--r-accent, #8a4b3a); }
 .sw:checked::after { transform: translateX(20px); }
 .wm-speak {
-  width: 56px; height: 56px; border-radius: 50%; cursor: pointer; margin: 0 auto 40px;
+  width: 56px; height: 56px; border-radius: 50%; cursor: pointer; margin: 0.5rem auto 2rem;
   display: flex; align-items: center; justify-content: center;
   border: none; background: var(--r-accent, #8a4b3a); color: #fff;
 }

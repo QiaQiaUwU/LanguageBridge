@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<style>
+  /* 整个窗口是透明的，只有球和展开的面板是实体 —— 其余区域点击穿透 */
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: transparent; overflow: hidden;
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  #wrap {
+    position: absolute; right: 20px; bottom: 20px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  }
+  /* 正在播放：网易云那种毛玻璃卡片 */
+  .np {
+    display: none;
+    margin-bottom: 8px; padding: 9px 10px; border-radius: 10px;
+    background: rgba(255, 255, 255, .55);
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    border: 1px solid rgba(255, 255, 255, .7);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .06);
+  }
+  .np.on { display: block; }
+  .np-title {
+    font-size: 11.5px; color: #8a4b3a; margin-bottom: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .np-line {
+    font-size: 13px; color: #1f2328; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .np-next {
+    margin-top: 4px; font-size: 11.5px; color: #9aa0a6; line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  #panel {
+    display: none;
+    width: 180px; padding: 10px;
+    background: rgba(255, 255, 255, .97);
+    border: 1px solid #e5e7eb; border-radius: 12px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .22);
+  }
+  #panel.on { display: block; }
+  .row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 8px;
+    font-size: 13.5px; color: #1f2328; cursor: pointer;
+  }
+  .row:hover { background: #f2f4f7; }
+  .p-title { font-size: 12px; color: #9aa0a6; padding: 2px 10px 6px; }
+  .p-media { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 2px 0 8px; }
+  .m-btn {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid #e5e7eb; background: #fff; color: #1f2328;
+    font-size: 15px; cursor: pointer;
+  }
+  .m-btn.big { width: 40px; height: 40px; background: #8a4b3a; color: #fff; border: none; }
+  .m-btn:hover { border-color: #8a4b3a; }
+  .p-rates { display: flex; gap: 4px; justify-content: center; padding-bottom: 8px; }
+  .r-btn {
+    flex: 1; padding: 4px 0; border-radius: 6px;
+    border: 1px solid #e5e7eb; background: #fff; color: #6b7280;
+    font-size: 11.5px; cursor: pointer;
+  }
+  .r-btn.on { border-color: #8a4b3a; color: #8a4b3a; }
+  .p-tip { font-size: 11px; color: #b8bec6; text-align: center; padding: 4px 0 2px; }
+  #ball {
+    position: relative;
+    width: 52px; height: 52px; border-radius: 50%;
+    /* 跟阅读高亮共用一个自定义色：设置里改一次，两边都变 */
+    background: var(--lb-custom-hl, #8a4b3a); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .3);
+    cursor: pointer; transition: transform .15s ease;
+  }
+  #ball:hover { transform: scale(1.06); }
+  #badge {
+    position: absolute; top: -2px; right: -2px;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 999px; background: #d9534f; color: #fff;
+    font-size: 11px; line-height: 18px; text-align: center;
+    display: none; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  }
+  #badge.on { display: block; }
+  /* 提醒时晃三下就安静，不做持续动画 */
+  @keyframes nudge {
+    0%,100% { transform: translateX(0) }
+    20%,60% { transform: translateX(-4px) }
+    40%,80% { transform: translateX(4px) }
+  }
+  #ball.remind { animation: nudge .5s ease 3; }
+  /* 有音频在播时给个环，提示"长按能调出操作台" */
+  #ball.has-audio { box-shadow: 0 0 0 3px rgba(138, 75, 58, .28), 0 4px 16px rgba(0, 0, 0, .3); }
+  .p-due {
+    padding: 6px 10px; margin-bottom: 4px;
+    border-radius: 8px; background: #fdf0ee; color: #b05a4a;
+    font-size: 12.5px; display: none; cursor: pointer;
+  }
+  .p-due.on { display: block; }
+  .p-remind {
+    display: none; margin: 0 0 8px; padding: 8px 10px;
+    border-radius: 10px; background: rgba(255, 196, 96, .22);
+    font-size: 12.5px; line-height: 1.5;
+  }
+  .p-remind.on { display: block; }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="panel">
+      <div class="p-due" id="due"></div>
+      <!-- 用户自己设的定时提醒，到点了在这里列出来 -->
+      <div class="p-remind" id="remind"></div>
+      <!-- 正在放什么：文章名 + 当前这句 + 下一句，毛玻璃底 -->
+      <div class="np" id="np">
+        <div class="np-title" id="npTitle"></div>
+        <div class="np-line" id="npLine"></div>
+        <div class="np-next" id="npNext"></div>
+      </div>
+      <div class="p-title" id="ptitle">播客播放</div>
+      <div class="p-media">
+        <button class="m-btn" data-media="prev" title="上一句">‹</button>
+        <button class="m-btn big" data-media="toggle" title="播放 / 暂停">▶</button>
+        <button class="m-btn" data-media="next" title="下一句">›</button>
+      </div>
+      <div class="p-rates">
+        <button class="r-btn" data-rate="0.75">0.75x</button>
+        <button class="r-btn" data-rate="1">1.0x</button>
+        <button class="r-btn" data-rate="1.25">1.25x</button>
+      </div>
+      <div class="row" data-act="open">打开主窗口</div>
+      <div class="p-tip">点一下球是对话，长按是这个面板</div>
+    </div>
+    <div id="ball">
+      <span id="badge"></span>
+      <svg viewBox="0 0 24 24" width="24" height="24">
+        <path fill="currentColor" d="M12 2a5 5 0 0 1 5 5v1h1a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3h1V7a5 5 0 0 1 5-5zm0 2a3 3 0 0 0-3 3v1h6V7a3 3 0 0 0-3-3zM9 13a1.2 1.2 0 1 0 0 2.4A1.2 1.2 0 0 0 9 13zm6 0a1.2 1.2 0 1 0 0 2.4a1.2 1.2 0 0 0 0-2.4z"/>
+      </svg>
+    </div>
+  </div>
+
+<script>
+  const ball = document.getElementById('ball')
+  const badge = document.getElementById('badge')
+  const due = document.getElementById('due')
+
+  // 待复习数量：球上一个角标，展开面板里一行提示
+  window.lbBall?.onDue?.(n => {
+    if (n > 0) {
+      badge.textContent = n > 99 ? '99+' : String(n)
+      badge.classList.add('on')
+      due.textContent = `今天有 ${n} 个词要复习`
+      due.classList.add('on')
+    } else {
+      badge.classList.remove('on')
+      due.classList.remove('on')
+    }
+  })
+
+  // 用户自己设的定时提醒到点：面板里列出来，球上晃一下
+  const remindBox = document.getElementById('remind')
+  window.lbBall?.onReminders?.(list => {
+    if (!Array.isArray(list) || !list.length) return
+    remindBox.textContent = '⏰ ' + list.map(r => r.label).join('、')
+    remindBox.classList.add('on')
+    ball.classList.add('remind')
+    setTimeout(() => ball.classList.remove('remind'), 2000)
+    panel.classList.add('on')
+    window.lbBall?.resize(260, 380)
+    window.lbBall?.setOverBall(true)
+    // 提醒是一次性的，看过就撤，不然一直挂在面板上
+    setTimeout(() => remindBox.classList.remove('on'), 60_000)
+  })
+
+  // 每天到点提醒一次：晃一下并把面板展开
+  window.lbBall?.onRemind?.(() => {
+    ball.classList.add('remind')
+    setTimeout(() => ball.classList.remove('remind'), 2000)
+    panel.classList.add('on')
+    window.lbBall?.resize(260, 340)
+    window.lbBall?.setOverBall(true)
+  })
+  const panel = document.getElementById('panel')
+  const wrap = document.getElementById('wrap')
+
+  /**
+   * 窗口默认是点击穿透的，否则这一大块透明区域会挡住桌面。
+   * 鼠标进入球或面板时临时关掉穿透，离开再打开。
+   */
+  function watchHover(el) {
+    el.addEventListener('mouseenter', () => window.lbBall?.setOverBall(true))
+    el.addEventListener('mouseleave', () => {
+      // 面板开着的时候别急着恢复穿透，否则移不过去
+      if (!panel.classList.contains('on')) window.lbBall?.setOverBall(false)
+    })
+  }
+  watchHover(ball)
+  watchHover(panel)
+  wrap.addEventListener('mouseleave', () => {
+    if (!panel.classList.contains('on')) window.lbBall?.setOverBall(false)
+  })
+
+  /**
+   * 点一下展开播放面板、再点一下折叠；长按（500ms）直接开对话窗口。
+   * 长按之后抬手不该顺带触发展开，所以用 longPressed 挡一下 click。
+   */
+  let pressTimer = null
+  let longPressed = false
+  let audioPlaying = false
+
+  // 主进程每 2 秒告诉我们有没有音频在播
+  /**
+   * 自定义色跟阅读高亮共用 localStorage 的同一个键。
+   * 悬浮球是独立窗口，读不到主窗口的 CSS 变量，所以自己取一次。
+   */
+  try {
+    const c = localStorage.getItem('lb-custom-hl')
+    if (c) document.documentElement.style.setProperty('--lb-custom-hl', c)
+  } catch (e) { /* 取不到就用默认色 */ }
+
+  const np = document.getElementById('np')
+  const npTitle = document.getElementById('npTitle')
+  const npLine = document.getElementById('npLine')
+  const npNext = document.getElementById('npNext')
+
+  window.lbBall?.onAudio?.(info => {
+    const p = info && typeof info === 'object' ? info.playing : info
+    audioPlaying = !!p
+    ball.classList.toggle('has-audio', audioPlaying)
+
+    if (audioPlaying && info && info.line) {
+      npTitle.textContent = info.title || ''
+      npLine.textContent = info.line || ''
+      npNext.textContent = info.next ? '下一句：' + info.next : ''
+      np.classList.add('on')
+    } else {
+      np.classList.remove('on')
+    }
+    // 音频停了就把操作台收起来，别留一个动不了的面板
+    if (!audioPlaying && panel.classList.contains('on')) {
+      panel.classList.remove('on')
+      window.lbBall?.resize(260, 120)
+    }
+  })
+
+  /**
+   * 手势：点一下 = 对话框，长按 = 播放操作台。
+   *
+   * 跟之前反过来了。理由：对话是最常用的，该给最轻的手势；
+   * 操作台只在播客真的在放的时候才有意义，所以放在长按，
+   * 而且没有音频在播时长按不给面板（省得点开一个空的）。
+   */
+  ball.addEventListener('pointerdown', () => {
+    longPressed = false
+    pressTimer = setTimeout(() => {
+      longPressed = true
+      if (!audioPlaying) {
+        // 没有音频在跑：抖一下表示"现在没有可操作的东西"
+        ball.classList.add('remind')
+        setTimeout(() => ball.classList.remove('remind'), 600)
+        return
+      }
+      const on = panel.classList.toggle('on')
+      window.lbBall?.resize(260, on ? 300 : 120)
+      window.lbBall?.setOverBall(true)
+    }, 500)
+  })
+  const clearPress = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null } }
+  ball.addEventListener('pointerup', clearPress)
+  ball.addEventListener('pointerleave', clearPress)
+
+  ball.addEventListener('click', () => {
+    // 长按之后抬手不该顺带触发点击
+    if (longPressed) { longPressed = false; return }
+    panel.classList.remove('on')
+    window.lbBall?.resize(260, 120)
+    window.lbBall?.openChat()
+  })
+
+  panel.addEventListener('click', e => {
+    const t = e.target
+
+    if (t.dataset.media) {
+      window.lbBall?.media({ type: t.dataset.media })
+      if (t.dataset.media === 'toggle') {
+        // 图标就地切换，不用等主窗口回话
+        t.textContent = t.textContent === '▶' ? '⏸' : '▶'
+      }
+      return
+    }
+
+    if (t.dataset.rate) {
+      panel.querySelectorAll('.r-btn').forEach(b => b.classList.remove('on'))
+      t.classList.add('on')
+      window.lbBall?.media({ type: 'rate', value: Number(t.dataset.rate) })
+      return
+    }
+
+    if (t.id === 'due') {
+      window.lbBall?.openApp()
+      panel.classList.remove('on')
+      window.lbBall?.resize(260, 120)
+      return
+    }
+
+    if (t.dataset.act === 'open') {
+      window.lbBall?.openApp()
+      panel.classList.remove('on')
+      window.lbBall?.resize(260, 120)
+    }
+  })
+</script>
+</body>
+</html>

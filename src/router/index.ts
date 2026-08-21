@@ -44,6 +44,12 @@ const routes = [
     meta: { title: '错词本' }
   },
   {
+    path: '/match',
+    name: 'MatchGame',
+    component: () => import('@/apps/study/MatchGamePage.vue'),
+    meta: { title: '卡片消消乐' }
+  },
+  {
     path: '/word-test',
     name: 'WordTest',
     component: () => import('@/apps/study/WordTestPage.vue'),
@@ -53,7 +59,7 @@ const routes = [
     path: '/study-notes',
     name: 'StudyNotes',
     component: StudyNotesPage,
-    meta: { title: '学习笔记' }
+    meta: { title: '学习记录' }
   },
   {
     path: '/scenario',

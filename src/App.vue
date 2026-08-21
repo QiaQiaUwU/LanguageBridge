@@ -30,6 +30,9 @@
     </aside>
 
     <div v-if="readingArticleTitle" class="article-topbar">
+      <span class="header-article-title">{{ readingArticleTitle }}</span>
+      <!-- 笔记面板在右边，入口就放右边。原来按钮在最左、面板在最右，
+           点一个东西结果对面弹出来，方向对不上。 -->
       <button
         class="header-article-toggle"
         :title="readingSidePanelOpen ? '收起笔记' : '展开笔记'"
@@ -37,7 +40,6 @@
       >
         <i :class="readingSidePanelOpen ? 'ri-side-bar-fill' : 'ri-side-bar-line'"></i>
       </button>
-      <span class="header-article-title">{{ readingArticleTitle }}</span>
     </div>
 
     <div v-if="storagePersisted === false && !storagePersistDismissed" class="storage-warning">
@@ -65,10 +67,18 @@
       <router-view />
     </main>
 
-    <div v-if="syncWarn" class="sync-warn" @click="syncWarn = ''">{{ syncWarn }}</div>
+    <div v-if="syncWarn" class="sync-warn" @click="dismissSyncWarn">{{ syncWarn }}</div>
+
+    <!-- 浏览器版的定时提醒提示条：不用系统通知，那个弹一下就没了 -->
+    <div v-if="reminderToast.length" class="remind-bar">
+      <span class="rb-icon">⏰</span>
+      <span class="rb-text">{{ reminderToast.map(r => r.label).join('、') }}</span>
+      <button class="rb-close" @click="reminderToast = []">知道了</button>
+    </div>
 
     <FloatingAgentButton />
     <AgentPanel />
+    <TaskCenter />
   </div>
 </template>
 
@@ -81,9 +91,10 @@ import { useWordStore } from '@/shared/stores/wordStore'
 import { useThemeStore } from '@/shared/stores/themeStore'
 import FloatingAgentButton from './components/FloatingAgentButton.vue'
 import AgentPanel from './components/AgentPanel.vue'
-import { recordActiveMinute } from '@/shared/core/activityLog'
+import TaskCenter from './components/TaskCenter.vue'
 import { storagePersisted, storagePersistDismissed } from '@/shared/core/storagePersistence'
 import { readingSidePanelOpen, readingArticleTitle } from '@/shared/core/readingPanelState'
+import { agentPanelOpen } from '@/shared/core/agentPanelState'
 
 const route = useRoute()
 const router = useRouter()
@@ -107,7 +118,7 @@ const navItems = [
   { to: '/words', label: '词汇中心', icon: 'ri-book-2-line' },
   { to: '/universe', label: '词汇宇宙', icon: 'ri-globe-line' },
   { to: '/reading', label: '阅读助手', icon: 'ri-book-open-line' },
-  { to: '/study-notes', label: '学习笔记', icon: 'ri-sticky-note-line' },
+  { to: '/study-notes', label: '学习记录', icon: 'ri-sticky-note-line' },
   { to: '/settings', label: '设置', icon: 'ri-settings-3-line' }
 ]
 const qrUrl = ref('')
@@ -143,26 +154,143 @@ const updateTitle = () => {
  * 累计失败 5 次以上、且这次会话里一次都没成功过，就报出来。
  */
 const syncWarn = ref('')
+
+/**
+ * 后端备份提示。
+ *
+ * 原来只要失败数 ≥5 就一直弹，而后端没启动时失败数只会越涨越多 ——
+ * 每跑一会儿就冒出来一次，很烦。改成：
+ *  - 整个会话只提醒一次
+ *  - 点掉之后记进 localStorage，这台机器不再提醒（除非后端真的连上过又断了）
+ *  - 后端连上过再断，才是值得重新提醒的情况
+ */
+const SYNC_DISMISS_KEY = 'lb-sync-warn-dismissed'
+let syncWarned = false
+
 const stopSync = onSyncStatus(s => {
-  if (s.failed >= 5 && s.lastOkAt === 0) {
-    syncWarn.value = `后端未连接，本次已有 ${s.failed} 项没备份上（只存在本地）。数据安全起见请检查后端是否启动。`
-  } else if (s.lastOkAt > 0 && syncWarn.value) {
-    syncWarn.value = ''
+  if (s.lastOkAt > 0) {
+    // 连上过：清掉"不再提醒"，这样真出问题时还会提示
+    localStorage.removeItem(SYNC_DISMISS_KEY)
+    if (syncWarn.value) syncWarn.value = ''
+    return
+  }
+  if (syncWarned || localStorage.getItem(SYNC_DISMISS_KEY)) return
+  if (s.failed >= 5) {
+    syncWarned = true
+    syncWarn.value = '没有连上后端，这些改动只存在浏览器本地。想要磁盘备份的话启动 backend 目录里的服务；不需要就点掉，不再提醒。'
   }
 })
+function dismissSyncWarn() {
+  syncWarn.value = ''
+  localStorage.setItem(SYNC_DISMISS_KEY, '1')
+}
+
+/**
+ * 给 Electron 桌面悬浮球用的两个入口。
+ *
+ * 主进程通过 executeJavaScript 调这两个函数：窗口收起时球上的播放键、
+ * 长按开对话，都要落到页面里真正的逻辑上。挂在 window 上是最简单可靠的桥。
+ */
+;(window as any).__lbOpenAgent = () => {
+  agentPanelOpen.value = true
+}
+/**
+ * 桌面悬浮球问「今天要复习几个词」。
+ * 直接用 FSRS 已有的 countDue，不另算一套。
+ */
+;(window as any).__lbDueCount = async () => {
+  try {
+    const { countDue } = await import('@/shared/core/fsrs')
+    return countDue()
+  } catch {
+    return 0
+  }
+}
+/**
+ * 自定义定时提醒。
+ *
+ * 提醒本身（addReminder / dueReminders）早就写好了，Agent 也能设，
+ * 但**没有任何地方去查有没有到点** —— 说了"已设置"然后永远不响。
+ * 这里补上两条路：
+ *   桌面版：壳每分钟来问一次，到点的推给悬浮球（角标 + 抖一下）
+ *   浏览器版：页面内自己轮询，弹一条提示条（系统通知容易被忽略）
+ */
+;(window as any).__lbDueReminders = async () => {
+  try {
+    const { dueReminders } = await import('@/shared/core/agentActions')
+    return dueReminders().map(r => ({ id: r.id, label: r.label, minutes: r.minutes }))
+  } catch {
+    return []
+  }
+}
+
+const reminderToast = ref<{ id: string; label: string }[]>([])
+let reminderTimer: ReturnType<typeof setInterval> | null = null
+
+onMounted(async () => {
+  const { loadReminders, dueReminders } = await import('@/shared/core/agentActions')
+  loadReminders()
+  // 桌面版由壳来轮询（那边球上有角标，比页面提示条显眼）；浏览器版自己来
+  if ((window as any).lbBall) return
+  reminderTimer = setInterval(() => {
+    const due = dueReminders()
+    if (due.length) reminderToast.value = due.map(r => ({ id: r.id, label: r.label }))
+  }, 30_000)
+})
+onUnmounted(() => {
+  if (reminderTimer) clearInterval(reminderTimer)
+})
+
+/**
+ * 有没有音频正在播。桌面悬浮球用它决定要不要给出操作台 ——
+ * 没有音频在跑的时候长按只会得到一个空面板，不如直接不给。
+ */
+/**
+ * 给桌面悬浮球的"现在在放什么"。
+ * 球上的控制台要显示文章名和当前这句，得从页面里取。
+ */
+/**
+ * 自定义高亮色写到根元素上，划线的 .hl-custom 靠它取色。
+ * 放在 App 里是因为标记可能出现在任何页面。
+ */
+function applyCustomHl() {
+  const c = localStorage.getItem('lb-custom-hl')
+  if (c) document.documentElement.style.setProperty('--lb-custom-hl', c)
+}
+applyCustomHl()
+window.addEventListener('storage', applyCustomHl)
+
+;(window as any).__lbNowPlaying = () => {
+  const g = window as any
+  return {
+    playing: (Array.from(document.querySelectorAll('audio')) as HTMLAudioElement[])
+      .some(el => !el.paused && !el.ended && el.currentTime > 0),
+    title: g.__lbNowTitle || '',
+    line: g.__lbNowLine || '',
+    next: g.__lbNextLine || ''
+  }
+}
+;(window as any).__lbAudioPlaying = () => {
+  const els = Array.from(document.querySelectorAll('audio')) as HTMLAudioElement[]
+  return els.some(el => !el.paused && !el.ended && el.currentTime > 0)
+}
+;(window as any).__lbMedia = (action: { type: string; value?: number }) => {
+  // 具体的播放控制由阅读助手实现并注册，这里只做转发
+  const h = (window as any).__lbMediaHandler
+  if (typeof h === 'function') h(action)
+}
+
 onUnmounted(() => stopSync())
 
 onMounted(updateTitle)
 watch(() => route.path, updateTitle)
 
-onMounted(() => {
-  const timer = setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      recordActiveMinute()
-    }
-  }, 60_000)
-  window.addEventListener('beforeunload', () => clearInterval(timer))
-})
+/**
+ * 这里原来有个全局计时器：只要窗口可见，每分钟就 recordActiveMinute() 一次。
+ * 那等于「打开软件 = 在学习」，翻设置、发呆都算进学习时长，
+ * 而且在背单词页时 StudyPage 自己也在记，同一分钟记两遍。
+ * 现在改由各练习页自己起 studyClock（见 shared/core/studyClock.ts）。
+ */
 
 onMounted(() => {
 })
@@ -248,14 +376,16 @@ body {
 }
 .nav-list { display: flex; flex-direction: column; gap: 3px; }
 
+/* left 用变量，不写死 178px —— 侧栏收起后是 56px，写死就整条错位 */
 .article-topbar {
   position: fixed;
   top: 0;
-  left: 178px;
+  left: var(--lb-nav-w, 178px);
   right: 0;
   height: 44px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 0 18px;
   background: var(--r-ui, #fff);
@@ -413,8 +543,10 @@ body {
 .app-main {
   flex: 1;
   min-width: 0;
+  min-height: 100vh;
   --lb-main-pad: 24px;
   padding: var(--lb-main-pad);
+  position: relative;
 }
 
 @media (max-width: 768px) {
@@ -499,4 +631,22 @@ body {
 .dark-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 84%, #000); }
 .dark-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 .dark-btn.small { padding: 6px 13px; font-size: 13px; }
+
+/* 定时提醒提示条（浏览器版）。桌面版走悬浮球角标，不显示这条 */
+.remind-bar {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-radius: 999px;
+  background: #2b2f36; color: #fff; font-size: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+  z-index: 900;
+}
+.rb-icon { flex-shrink: 0; }
+.rb-text { line-height: 1.5; }
+.rb-close {
+  border: none; background: rgba(255, 255, 255, .18); color: #fff;
+  padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 13px;
+  font-family: inherit;
+}
+.rb-close:hover { background: rgba(255, 255, 255, .3); }
 </style>

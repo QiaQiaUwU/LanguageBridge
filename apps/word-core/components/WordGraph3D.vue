@@ -1716,6 +1716,9 @@ watch(() => props.nodeStyle, () => {
 </script>
 
 <style scoped>
+
+/* 钻取面包屑：之前没有样式，几段文字挤在一起 */
+.drill-crumb { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--r-ink2, #9aa0a6); }
 .graph-shell { position: relative; width: 100%; height: 100%; }
 .force-graph-canvas {
   width: 100%;

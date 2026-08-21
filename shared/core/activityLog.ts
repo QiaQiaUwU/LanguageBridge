@@ -92,6 +92,38 @@ export async function getStreak(): Promise<number> {
   return streak
 }
 
+/**
+ * 本周（周一到周日）每天有没有学。
+ *
+ * 「有没有学」的口径跟热力图一致：新学、复习、学习时长三样加起来大于 0。
+ * 返回 7 个，下标 0 是周一。
+ */
+export async function getWeekActivity(): Promise<{ date: string; active: boolean; isToday: boolean }[]> {
+  const all = (await wordDB.getAllActivity()) as DayActivity[]
+  const map = new Map(all.map(d => [d.date, d]))
+
+  const now = new Date()
+  // getDay() 里 0 是周日，换算成「离本周一几天」
+  const offsetToMonday = (now.getDay() + 6) % 7
+  const monday = new Date(now)
+  monday.setDate(now.getDate() - offsetToMonday)
+
+  const today = todayStr()
+  const out: { date: string; active: boolean; isToday: boolean }[] = []
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const rec = map.get(key)
+    out.push({
+      date: key,
+      active: !!rec && (rec.newWords + rec.reviewCount + rec.minutesActive) > 0,
+      isToday: key === today
+    })
+  }
+  return out
+}
+
 export interface HeatmapCell {
   date: string
   level: 0 | 1 | 2 | 3 // 无/少/中/多，用于染色

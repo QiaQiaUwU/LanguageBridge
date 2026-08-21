@@ -1,0 +1,23 @@
+# 批处理和 VBS 必须是 CRLF，否则 cmd/wscript 解析错位；
+# 中文注释按 GBK 存，cmd 默认按 GBK 读，UTF-8 会变乱码被当成命令执行。
+#
+# 注意：.gitattributes 里**后面的规则覆盖前面的**，所以通配的 `*` 那条
+# 必须写在最前面，几条 `-text` 保护写在它后面。
+# 之前是反过来的：`*.vbs -text` 写在 `* text=auto eol=lf` 前面，
+# 被后者盖掉了 —— git 会把 .vbs 的 CRLF 换成 LF，wscript 解析就出问题
+# （git add 时那句 "CRLF will be replaced by LF" 的警告就是这么来的）。
+# .bat 当时侥幸没事，只因为文件末尾又重复写了一遍 `*.bat -text`。
+
+# 先定通用规则
+* text=auto eol=lf
+
+# 二进制，不做任何转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+
+# 这几类必须原样保留 CRLF + GBK，放在最后才盖得住上面的 `*`
+*.bat -text
+*.cmd -text
+*.vbs -text

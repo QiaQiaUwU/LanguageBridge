@@ -13,6 +13,9 @@
 # ---- 依赖与构建产物 ----
 node_modules/
 dist/
+# 两条打包路线的产物：pkg 走 dist-exe，electron-builder 走 dist-desktop
+dist-exe/
+dist-desktop/
 *.log
 
 # 依赖/构建的哈希标记：server.mjs 靠它判断要不要重装重建，跟机器绑定
@@ -36,6 +39,20 @@ public/data/word_explanations/
 # ---- 运行时杂项 ----
 .app-window/
 port.txt
+
+# ---- 只给自己看的开发笔记 ----
+# 这几份是过程记录和演示话术：写了大量"这里还没做""那个是死代码"，
+# 是给自己排期用的，公开仓库里放着既没用也容易误导人。
+# 想留档就存在本地，不进仓库。
+待办与方案.md
+展示稿.md
+上传到GitHub.md
+docs/项目现状说明.md
+docs/GitHub发布清单.md
+docs/介绍视频稿.md
+docs/README-旧版备份.md
+# 需求文档同样是进度记录，跟上面几份一个性质
+docs/需求文档-v2.md
 
 # ---- 编辑器 / 系统 ----
 .DS_Store

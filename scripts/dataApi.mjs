@@ -290,6 +290,35 @@ export async function handleDataApi(req, res, store, urlPath) {
     await handleTranscribe(req, res)
     return true
   }
+  /**
+   * 直接收一段音频存下来，返回它的文件名 —— 转写要的就是这个。
+   *
+   * 之前只有 /extract（收视频、调 ffmpeg 抽音轨）。音频已经在浏览器里抽好了
+   * 的时候没有入口把它交给后端，转写按钮就一直是灰的。
+   * 这条不碰 ffmpeg，纯落盘。
+   */
+  if (req.method === 'POST' && urlPath === '/api/media/put-audio') {
+    const ext = 'wav'
+    const outName = `audio-${Date.now().toString(36)}.${ext}`
+    const out = join(mediaDir(), outName)
+    try {
+      await new Promise((resolve, reject) => {
+        const ws = createWriteStream(out)
+        req.pipe(ws)
+        req.on('error', reject)
+        ws.on('error', reject)
+        ws.on('finish', resolve)
+      })
+      const size = existsSync(out) ? statSync(out).size : 0
+      if (!size) throw new Error('收到的音频是空的')
+      sendJson(res, 200, { ok: true, file: outName, url: `/api/media/file/${outName}`, size })
+    } catch (e) {
+      try { if (existsSync(out)) unlinkSync(out) } catch { /* 清不掉就算了 */ }
+      sendJson(res, 500, { error: e && e.message ? e.message : String(e) })
+    }
+    return true
+  }
+
   if (req.method === 'POST' && urlPath === '/api/media/extract') {
     await handleMediaExtract(req, res)
     return true

@@ -23,6 +23,13 @@
         <button v-if="centerWord" class="search-exit" title="回到筛选结果" @click="exitCenter">×</button>
         <div v-if="searchFocus && suggestions.length" class="search-drop">
           <button
+            v-if="searchHits.length > suggestions.length"
+            class="search-item all"
+            @mousedown.prevent="showAllHits"
+          >
+            把匹配的 {{ searchHits.length }} 个词全画出来
+          </button>
+          <button
             v-for="s in suggestions"
             :key="s.id"
             class="search-item"
@@ -225,6 +232,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { describePage } from '@/shared/core/agentTools'
+import { useAgentChatStore } from '@/shared/stores/agentChatStore'
 import WordGraph3D from '@/apps/word-core/components/WordGraph3D.vue'
 import type { GraphNode, GraphLink } from '@/apps/word-core/components/WordGraph3D.vue'
 import GraphLegend from '@/apps/word-core/components/GraphLegend.vue'
@@ -243,6 +252,7 @@ import { useWordStore } from '@/shared/stores/wordStore'
 import type { WordItem } from '@/shared/types/WordItem'
 
 const wordStore = useWordStore()
+const agentChat = useAgentChatStore()
 
 const LIMIT_STEPS = [0, 60, 120, 200, 300, 500, 800, 1200, 2000, 3000, 5000, 8000, 15000]
 const MAX_LIMIT = LIMIT_STEPS[LIMIT_STEPS.length - 1]
@@ -253,6 +263,15 @@ const limitIdx = ref(LIMIT_STEPS.indexOf(300))
 const limit = computed(() => LIMIT_STEPS[limitIdx.value] ?? 300)
 const manualText = ref('')
 const detailWord = ref<WordItem | null>(null)
+/**
+ * 左侧设置面板收起没有。
+ *
+ * 模板里那个折叠按钮一直在用 panelFolded（:class、v-show、@click 五处），
+ * 但 script 里从来没声明过 —— Vue 会把它当成 undefined：
+ * 面板永远展开、按钮点了没反应，控制台还会报 property not defined。
+ * 这是这次全量自查扫出来的，不是这轮改动引起的。
+ */
+const panelFolded = ref(false)
 const colorBy = ref<'exam' | 'topic' | 'morpheme' | 'mastery'>('exam')
 
 const colorTick = ref(0)
@@ -406,24 +425,68 @@ const searchFocus = ref(false)
 const centerWord = ref<WordItem | null>(null)
 const expandDepth = ref(1)
 
+/**
+ * 匹配一个词。除了词形本身，还认词根词缀和释义 ——
+ * 搜 "spect" 应该把 inspect/respect/spectator 都算上，
+ * 搜 "un" 应该能捞出所有 un- 开头的。
+ */
+function matchWord(w: WordItem, q: string): boolean {
+  const lw = w.word.toLowerCase()
+
+  // 单个字母 = 找首字母。用 includes 的话搜 a 会把所有含 a 的词都捞出来，
+  // 那不是"按字母找词"该有的结果。
+  if (q.length === 1 && /[a-z]/.test(q)) {
+    if (lw.startsWith(q)) return true
+  } else if (lw.includes(q)) {
+    return true
+  }
+
+  const m = w.morphemes
+  if (m) {
+    for (const part of [m.prefix, m.root, m.suffix]) {
+      if (part?.form && part.form.toLowerCase().includes(q)) return true
+    }
+  }
+  if (w.meanings?.some(x => x.chinese?.includes(q))) return true
+  return false
+}
+
+/** 所有匹配的词，不只是前 8 个建议 */
+const searchHits = computed<WordItem[]>(() => {
+  const q = searchText.value.trim().toLowerCase()
+  if (!q) return []
+  return scopedWords.value.filter(w => matchWord(w, q))
+})
+
 const suggestions = computed<WordItem[]>(() => {
   const q = searchText.value.trim().toLowerCase()
   if (!q) return []
+  const exact: WordItem[] = []
   const starts: WordItem[] = []
-  const contains: WordItem[] = []
-  for (const w of wordStore.words) {
+  const others: WordItem[] = []
+  for (const w of searchHits.value) {
     const lw = w.word.toLowerCase()
-    if (lw === q) starts.unshift(w)
+    if (lw === q) exact.push(w)
     else if (lw.startsWith(q)) starts.push(w)
-    else if (contains.length < 8 && lw.includes(q)) contains.push(w)
-    if (starts.length >= 8) break
+    else others.push(w)
+    if (exact.length + starts.length >= 8) break
   }
-  return [...starts, ...contains].slice(0, 8)
+  return [...exact, ...starts, ...others].slice(0, 8)
 })
 
 function commitSearchTop() {
   const first = suggestions.value[0]
   if (first) focusOn(first)
+}
+
+/** 把搜索命中的词全部载入图，而不是只看某一个词的关系网 */
+function showAllHits() {
+  const hits = searchHits.value
+  if (!hits.length) return
+  centerWord.value = null
+  manualWords.value = hits.slice(0, MANUAL_MAX).map(w => w.word.toLowerCase())
+  searchFocus.value = false
+  paramTick.value++
 }
 
 function focusOn(target: WordItem | string) {
@@ -825,6 +888,42 @@ onMounted(async () => {
   try { await loadFsrsData(); familiarityTick.value++ } catch (e) { console.error('[词汇宇宙] 复习数据加载失败', e) }
   applyLoad()
 })
+
+/**
+ * 把当前图上有什么报给 Agent，用户问「讲讲屏幕上这几个词的关系」时它才知道指的是谁。
+ *
+ * 必须放在文件末尾：centerWord / applied 都是后面才声明的 const，
+ * 之前把这段写在前面又带了 immediate，setup 阶段立刻执行就撞上暂时性死区，
+ * 报 "Cannot access 'g' before initialization"。
+ * 这里也不再用 immediate —— 首次的上下文等数据真正就位后由依赖变化触发。
+ */
+watch(
+  () => [centerWord.value?.word, applied.value?.cores.size, colorBy.value] as const,
+  () => {
+    /**
+     * cores 是 Set<string>（存的是词条 id），不是 WordItem[]。
+     * 我原来照数组写成 cores.slice(0,40).map(w => w.word)，
+     * 一进词汇宇宙就 "o.slice is not a function" 白屏。
+     */
+    const coreIds = applied.value?.cores
+    // 防御：不管它是 Set 还是数组都能遍历，类型再变也不会白屏
+    if (!coreIds || typeof (coreIds as any)[Symbol.iterator] !== 'function') return
+    const byId = new Map(wordStore.words.map(w => [w.id, w.word]))
+    const names: string[] = []
+    for (const id of coreIds) {
+      const w = byId.get(id)
+      if (w) names.push(w)
+      if (names.length >= 40) break
+    }
+    const ctx = describePage({
+      path: '/universe',
+      centerWord: centerWord.value?.word,
+      visibleWords: names
+    })
+    agentChat.setPageContext(ctx.summary)
+  }
+)
+
 </script>
 
 <style scoped lang="scss">

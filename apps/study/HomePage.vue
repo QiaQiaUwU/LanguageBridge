@@ -30,7 +30,10 @@
     <section class="task-card">
       <div class="task-top">
         <div class="task-left">
-          <h2 class="task-book">{{ studyGroup?.name || '全部单词' }}</h2>
+          <h2 class="task-book">
+            {{ studyGroup?.name || '全部单词' }}
+            <span v-if="studyTag" class="task-tag">{{ studyTag }}</span>
+          </h2>
           <p class="task-eta">预计完成日期：{{ etaDate }}</p>
           <div class="progress-bar"><div class="progress-fill" :style="{ width: progressPercent + '%' }"></div></div>
           <div class="progress-line">
@@ -40,7 +43,7 @@
           <div class="task-tools">
             <button class="ghost-btn small" @click="showPicker = true">选择词表</button>
             <button class="ghost-btn small" @click="showSetting = true">更改进度</button>
-            <button class="ghost-btn small" @click="go('/mastered')">学习记录</button>
+            <button class="ghost-btn small" @click="go('/mastered')">已掌握词表</button>
           </div>
         </div>
 
@@ -79,7 +82,7 @@
           <span class="entry-num">{{ masteredCount }}</span>
         </button>
         <button class="entry-card" @click="go('/study-notes')">
-          <span class="entry-name">学习笔记</span>
+          <span class="entry-name">学习记录</span>
           <span class="entry-num">{{ noteCount }}</span>
         </button>
       </div>
@@ -177,7 +180,7 @@
             <template v-if="pickTags.length"> · {{ pickTags.join(' + ') }}</template>
           </span>
           <button class="ghost-btn" @click="clearPick">重置</button>
-          <button class="dark-btn" :disabled="!pickedCount" @click="showPicker = false">用这批词学</button>
+          <button class="dark-btn" :disabled="!pickedCount" @click="showPicker = false">确定</button>
         </div>
       </div>
     </div>
@@ -191,10 +194,21 @@
         支持 TXT / CSV / JSON / MD / DOCX / PDF，格式如 <code>word;中文</code>。导入后自动补音标、词性、例句。
       </p>
       <input v-model="importName" class="import-name" placeholder="词表名称（留空则用文件名）" />
-      <label class="import-drop">
-        <input type="file" class="import-file" :accept="SUPPORTED_IMPORT_EXTS" @change="onPickImport" />
-        <span>{{ importing ? '导入中…' : '选择文件' }}</span>
-      </label>
+      <!-- 这里原来是个 <label>，名字叫 import-drop 但 label 不接受拖放，
+           拖上去毫无反应。改成挂 drop 事件的容器。 -->
+      <div
+        class="import-drop"
+        :class="{ active: importDropActive, busy: importing }"
+        @dragover.prevent="importDropActive = true"
+        @dragleave="importDropActive = false"
+        @drop.prevent="onImportDrop"
+      >
+        <span class="id-main">{{ importing ? '导入中…' : '把词表文件拖到这里' }}</span>
+        <label class="id-pick">
+          选择文件
+          <input type="file" class="import-file" :accept="SUPPORTED_IMPORT_EXTS" hidden @change="onPickImport" />
+        </label>
+      </div>
       <p v-if="importMsg" class="import-msg">{{ importMsg }}</p>
     </section>
   </div>
@@ -224,8 +238,22 @@ const showImport = ref(false)
 const importName = ref('')
 const importing = ref(false)
 const importMsg = ref('')
+const importDropActive = ref(false)
+
+async function onImportDrop(e: DragEvent) {
+  importDropActive.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) await doImportFile(file)
+}
+
 async function onPickImport(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file) await doImportFile(file)
+}
+
+async function doImportFile(file: File) {
   if (!file) return
   importing.value = true
   importMsg.value = '正在解析文件…'
@@ -239,7 +267,6 @@ async function onPickImport(e: Event) {
     importMsg.value = `导入失败：${err instanceof Error ? err.message : '检查一下文件格式'}`
   } finally {
     importing.value = false
-    ;(e.target as HTMLInputElement).value = ''
   }
 }
 import { commitScope, studyRoute, wordsOfScope, type StudyScope } from '@/shared/core/studyScope'
@@ -496,7 +523,19 @@ onMounted(async () => {
   try {
     const rs = useReaderStore()
     await rs.loadArticles()
-    noteCount.value = rs.articles.filter(a => a.notes && a.notes.replace(/<[^>]+>/g, '').trim()).length
+    /**
+     * 学习记录条数。除了有笔记的文章，还要算上章节笔记和 AI 生成的文章 ——
+     * 学习记录页现在这三种都列，首页这个数字得跟它对得上，
+     * 否则点进去看到的条数比首页显示的多。
+     */
+    const AI_SOURCES = ['scenario-podcast', 'scenario-reading', 'scenario-note']
+    const hasText = (h?: string) => !!h && !!h.replace(/<[^>]+>/g, '').trim()
+    noteCount.value = rs.articles.reduce((n, a) => {
+      if (hasText(a.notes)) n++
+      n += (a.chapterNotes || []).filter(hasText).length
+      if (a.source && AI_SOURCES.includes(a.source) && a.sentences?.length) n++
+      return n
+    }, 0)
   } catch { /* 同上，笔记数量取不到就显示 0，不影响主页其它部分 */ }
 
   const today = await getTodayStats()
@@ -606,6 +645,12 @@ function fmt(d: Date): string {
 }
 .task-top { display: flex; gap: 28px; align-items: stretch; flex-wrap: wrap; }
 .task-left { flex: 1; min-width: 260px; }
+.task-tag {
+  display: inline-block; margin-left: 10px; padding: 2px 9px;
+  border-radius: 999px; font-size: 12.5px; font-weight: 400;
+  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #6b7280);
+  vertical-align: middle;
+}
 .task-book { font-size: 19px; margin: 0 0 6px; }
 .task-eta { font-size: 12.5px; color: var(--r-ink2, #888); margin: 0 0 10px; }
 .progress-bar { height: 7px; border-radius: 4px; background: var(--r-border, #eee); overflow: hidden; }
@@ -740,10 +785,23 @@ function fmt(d: Date): string {
   border: 1px solid var(--r-border, #ddd); border-radius: 8px;
   background: var(--r-ui, #fafafa); color: inherit; font-size: 13.5px; outline: none;
 }
+.import-drop.active {
+  border-color: var(--r-accent, #5b7a99);
+  background: color-mix(in srgb, var(--r-accent, #5b7a99) 7%, transparent);
+}
+.import-drop.busy { opacity: .7; }
+.id-main { font-size: 14px; color: var(--r-ink2, #8a9099); }
+.id-pick {
+  padding: 6px 14px; border: 1px solid var(--r-border, #dfe3e8); border-radius: 8px;
+  background: var(--r-paper, #fff); color: var(--r-ink, #1f2328);
+  font-size: 13px; cursor: pointer;
+  &:hover { border-color: var(--r-ink2, #9aa0a6); }
+}
 .import-drop {
-  display: flex; align-items: center; justify-content: center;
-  padding: 22px; border: 1px dashed var(--r-border, #ccc); border-radius: 10px;
-  cursor: pointer; font-size: 13.5px; color: var(--r-ink2, #888);
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 26px; border: 2px dashed var(--r-border, #d8dce1); border-radius: 12px;
+  font-size: 13.5px; color: var(--r-ink2, #888);
+  transition: border-color .15s ease, background-color .15s ease;
 }
 .import-drop:hover { border-color: var(--r-accent, #8a4b3a); color: var(--r-accent, #8a4b3a); }
 .import-file { display: none; }

@@ -8,7 +8,8 @@ import { parseText, parseJson, toWordItem } from '@/shared/core/parser'
 import { extractTextFromFile } from '@/shared/core/fileExtract'
 import { enrichWords, applyExplanation, type EnrichProgress } from '@/shared/core/enrichment'
 import { recordWordLearned } from '@/shared/core/activityLog'
-import { nextReviewAfterCorrect, nextReviewAfterWrong, statusAfterWrong, statusAfterCorrect } from '@/shared/core/spacedRepetition'
+import { statusAfterWrong, statusAfterCorrect } from '@/shared/core/spacedRepetition'
+import { applyGrade, flushFsrsData, nextReviewOf, Rating } from '@/shared/core/fsrs'
 
 export const useWordStore = defineStore('word', () => {
   const words = ref<WordItem[]>([])
@@ -32,11 +33,13 @@ export const useWordStore = defineStore('word', () => {
     words.value.filter(w => (w.learningRecord?.familiarity || 0) >= 80).length
   )
 
+  // 到期与否统一走 nextReviewOf（FSRS 优先，老数据回退），
+  // 不再各处各写一遍 learningRecord.nextReview 的比较
   const needReviewCount = computed(() => {
     const now = new Date().toISOString()
     return words.value.filter(w => {
-      if (!w.learningRecord?.nextReview) return true
-      return w.learningRecord.nextReview <= now
+      const due = nextReviewOf(w)
+      return !due || due <= now
     }).length
   })
 
@@ -54,8 +57,8 @@ export const useWordStore = defineStore('word', () => {
   function getReviewWords(): WordItem[] {
     const now = new Date().toISOString()
     return words.value.filter(w => {
-      if (!w.learningRecord?.nextReview) return true
-      return w.learningRecord.nextReview <= now
+      const due = nextReviewOf(w)
+      return !due || due <= now
     })
   }
 
@@ -179,7 +182,8 @@ export const useWordStore = defineStore('word', () => {
 
   async function updateWordFields(wordId: string, patch: Partial<Pick<WordItem,
     'word' | 'phonetic' | 'meanings' | 'common_phrases' | 'morphology' | 'etymology' |
-    'memory_tips' | 'synonyms' | 'antonyms' | 'word_family' | 'example_sentences' | 'detailed_explanation'
+    'memory_tips' | 'synonyms' | 'antonyms' | 'word_family' | 'example_sentences' | 'detailed_explanation' |
+    'userNote'
   >>) {
     const word = words.value.find(w => w.id === wordId)
     if (!word) return
@@ -361,21 +365,51 @@ export const useWordStore = defineStore('word', () => {
     }
   }
 
+  /**
+   * 只动错词本，别的什么都不碰。
+   *
+   * 抽出来是因为原来只有听写那条路会写错词本 —— 打字练习（TypeWords 流程）
+   * 打错的词一个都进不去。打字流程的复习排期走 FSRS，不该顺带调用
+   * recordDictationResult（那个还会写 learningRecord 那套间隔），
+   * 所以两边共用这一个函数，各自的排期各走各的。
+   */
+  async function markWrongBook(wordId: string, correct: boolean, userInput = '') {
+    const word = words.value.find(w => w.id === wordId)
+    if (!word) return
+    try {
+      if (correct) {
+        await db.removeFromWrongBook(wordId)
+      } else {
+        await db.recordWrongWord({
+          wordId,
+          word: word.word,
+          input: userInput,
+          date: new Date().toISOString().slice(0, 10)
+        })
+      }
+    } catch (e) {
+      console.warn('错词本写入失败（不阻断练习流程）:', e)
+    }
+  }
+
   async function recordDictationResult(wordId: string, correct: boolean, userInput = '') {
     const word = words.value.find(w => w.id === wordId)
     if (!word) return
     const now = new Date().toISOString()
 
-    const today = now.slice(0, 10)
-    try {
-      if (correct) {
-        await db.removeFromWrongBook(wordId)
-      } else {
-        await db.recordWrongWord({ wordId, word: word.word, input: userInput, date: today })
-      }
-    } catch (e) {
-      console.warn('错词本写入失败（不阻断听写流程）:', e)
-    }
+    await markWrongBook(wordId, correct, userInput)
+    /**
+     * 听写/单词测试的结果也走 FSRS。
+     *
+     * 之前这里用的是 spacedRepetition.ts 那张固定间隔表（1/2/4/7/15/30 天），
+     * 而打字流程走 FSRS —— 同一个词被两套算法各排一次，
+     * 单词详情显示的日期和今日复习实际挑词的依据对不上。
+     * 现在统一由 FSRS 出排期：答对记 Good，答错记 Again。
+     */
+    const card = applyGrade(word.word, (correct ? Rating.Good : Rating.Again) as any)
+    const fsrsDue = new Date(card.due).toISOString()
+    flushFsrsData().catch(() => { /* 落盘失败不阻断练习 */ })
+
     const prev = word.learningRecord
     const consecutiveCorrect = correct ? (prev?.consecutiveCorrect || 0) + 1 : 0
     const consecutiveWrong = correct ? 0 : (prev?.consecutiveWrong || 0) + 1
@@ -383,7 +417,9 @@ export const useWordStore = defineStore('word', () => {
 
     word.learningRecord = {
       lastReview: now,
-      nextReview: correct ? nextReviewAfterCorrect(consecutiveCorrect) : nextReviewAfterWrong(consecutiveWrong),
+      // 排期只由 FSRS 算（下面 applyGrade 已经更新过卡片），这里只是把它抄一份
+      // 到词条上，好让不方便读 FSRS 缓存的地方（老代码、导出）也看得到同一个日期
+      nextReview: fsrsDue,
       familiarity: prev?.familiarity ?? 0,
       reviewCount: (prev?.reviewCount || 0) + 1,
       testScore: correct ? 100 : 0,
@@ -628,6 +664,7 @@ export const useWordStore = defineStore('word', () => {
     setWordStatus,
     setStudyList,
     recordDictationResult,
+    markWrongBook,
     listWrongBook,
     removeFromWrongBook,
 
