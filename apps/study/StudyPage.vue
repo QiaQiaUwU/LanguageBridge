@@ -540,6 +540,14 @@ function resumeSnapshot() {
   wrongWords.value = wordsByNames(snap.wrongWords || [])
   isWrongRound.value = !!snap.isWrongRound
   segments.value = Array.isArray(snap.segments) ? snap.segments : []
+  /**
+   * 这一轮学过的词也要接着算。
+   * 不恢复的话，退出前学的那些词在场景学习那头等于没学过 ——
+   * 一课的词跨着一次退出学完，课文就永远不弹。
+   * 旧快照没这个字段，wordsByNames([]) 得到空数组，跟以前的行为一样。
+   */
+  recentWords.value = wordsByNames(snap.recentWords || [])
+  learnedSinceScenario.value = Number(snap.learnedSinceScenario) || 0
 
   stage.value = snap.stage as PracticeStage
   type.value = snap.type as PracticeType
@@ -580,7 +588,9 @@ function snapshotNow() {
     excludeWords: [...excludeWords.value],
     wrongWords: wrongWords.value.map(w => w.word),
     isWrongRound: isWrongRound.value,
-    segments: segments.value.map(x => [...x] as [number, number])
+    segments: segments.value.map(x => [...x] as [number, number]),
+    recentWords: recentWords.value.map(w => w.word),
+    learnedSinceScenario: learnedSinceScenario.value
   })
 }
 
@@ -755,6 +765,15 @@ const isNewWordStage = computed(() =>
   stage.value === 'listenNew' || stage.value === 'dictationNew'
 )
 const learnedSinceScenario = ref(0)
+/**
+ * 这一轮已经打完的词，按打完的先后排（同一个词只进一次）。
+ *
+ * onComplete 里写、场景学习那段读：
+ * 有教材时拿它算「这一课的词是不是都学完了」，没教材时直接切最后 N 个当素材。
+ * 上一轮清理时这行跟 pendingLesson / scenarioPrompt 一起被误删了，
+ * 于是每打完一个词 onComplete 就抛 ReferenceError: recentWords is not defined。
+ */
+const recentWords = ref<WordItem[]>([])
 const syllabus = ref<Syllabus | null>(null)
 
 /**
@@ -1089,6 +1108,10 @@ function restart() {
   ratingMap.value = {}
   excludeWords.value = new Set()
   segments.value = []
+  // 「再练一遍」是新的一轮：上一轮学过的词不该留着，
+  // 否则场景学习会拿上一轮的词去凑「这一课学完了」
+  recentWords.value = []
+  learnedSinceScenario.value = 0
   init().then(resumeTimer)
 }
 

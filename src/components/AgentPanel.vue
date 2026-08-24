@@ -386,8 +386,15 @@ async function doAction(i: number) {
     router,
     recentLookups: () => getRecentLookups(20)
   })
-  // 执行结果已经回填成一条隐藏消息，让模型接着说
-  agentChat.send('')
+  /**
+   * 执行结果已经作为一条隐藏消息回填进历史，下一次说话时模型就能看到。
+   *
+   * 原来这里还有一行，调的是 store 上并不存在的 `send()`（store 里那个方法叫
+   * `sendChat`）—— 点一次「执行」必然 TypeError。而 `sendChat('')` 空串会被它开头的
+   * `if (!trimmed) return` 直接挡掉，等于什么都不做，所以这一步索性先不发。
+   * 要让它执行完立刻自己补一句，得给 store 加一个「不带新用户消息也能发起一轮」的
+   * continueChat()，那是功能改动，等你定。
+   */
 }
 
 const loadingModels = ref(false)

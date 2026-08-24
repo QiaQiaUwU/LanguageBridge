@@ -1,4 +1,4 @@
-import { aiSettings, isAiConfigured } from './aiSettings'
+import { aiSettings, isAiConfigured, modelForHeavyTask } from './aiSettings'
 
 export class AiError extends Error {}
 

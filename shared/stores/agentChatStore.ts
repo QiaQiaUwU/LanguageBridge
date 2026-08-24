@@ -125,37 +125,56 @@ export const useAgentChatStore = defineStore('agentChat', () => {
     chatHistory.value = []
   }
 
-  return { chatHistory, chatSending, lastToolCallAt, sendChat, pushAssistantMessage, pushUserMessage, clearChat, setPageContext }
+  /**
+   * 用户点了「执行」。
+   *
+   * 结果会作为一条隐藏消息回填进历史 —— 模型下一轮能看到自己那步做成没做成，
+   * 才不会接着编「已经建好了」。
+   *
+   * 原来这两个函数写在 store 外面（模块顶层的 export function），
+   * 里面却在用只存在于 store 内部的 chatHistory：
+   *   - 调用时必抛 ReferenceError: chatHistory is not defined
+   *   - 而且 AgentPanel 是按 `agentChat.confirmAction(...)` 调的，
+   *     store 根本没把它 return 出去，先一步就是 “不是一个函数”。
+   * 也就是说确认条上的「执行」「不用」两个按钮一直是点了就报错。
+   * 挪进来，并跟着 return 出去。
+   */
+  async function confirmAction(msgIndex: number, deps: any) {
+    const msg = chatHistory.value[msgIndex]
+    if (!msg?.pendingAction) return
+    const spec = msg.pendingAction
+    msg.pendingAction = undefined
+
+    const { runAction } = await import('@/shared/core/agentActions')
+    const res = await runAction(spec, deps)
+    msg.actionResult = (res.ok ? '✓ ' : '✗ ') + res.summary
+
+    // 回填给模型，下一轮它知道实际发生了什么
+    chatHistory.value.push({
+      role: 'user',
+      content: `［系统］刚才那个操作的执行结果：${res.ok ? '成功' : '失败'}——${res.summary}。请据此接着回答，不要假设别的结果。`,
+      hidden: true
+    })
+  }
+
+  /** 用户点了「不用」 */
+  function rejectAction(msgIndex: number) {
+    const msg = chatHistory.value[msgIndex]
+    if (!msg) return
+    msg.pendingAction = undefined
+    msg.actionResult = '已取消，没有改动任何数据'
+  }
+
+  return {
+    chatHistory,
+    chatSending,
+    lastToolCallAt,
+    sendChat,
+    pushAssistantMessage,
+    pushUserMessage,
+    clearChat,
+    confirmAction,
+    rejectAction,
+    setPageContext
+  }
 })
-
-/**
- * 用户点了「执行」。
- *
- * 结果会作为一条系统消息回填进历史 —— 模型下一轮能看到自己那步做成没做成，
- * 才不会接着编"已经建好了"。
- */
-export async function confirmAction(msgIndex: number, deps: any) {
-  const msg = chatHistory.value[msgIndex]
-  if (!msg?.pendingAction) return
-  const spec = msg.pendingAction
-  msg.pendingAction = undefined
-
-  const { runAction } = await import('@/shared/core/agentActions')
-  const res = await runAction(spec, deps)
-  msg.actionResult = (res.ok ? '✓ ' : '✗ ') + res.summary
-
-  // 回填给模型，下一轮它知道实际发生了什么
-  chatHistory.value.push({
-    role: 'user',
-    content: `［系统］刚才那个操作的执行结果：${res.ok ? '成功' : '失败'}——${res.summary}。请据此接着回答，不要假设别的结果。`,
-    hidden: true
-  })
-}
-
-/** 用户点了「不用」 */
-export function rejectAction(msgIndex: number) {
-  const msg = chatHistory.value[msgIndex]
-  if (!msg) return
-  msg.pendingAction = undefined
-  msg.actionResult = '已取消，没有改动任何数据'
-}

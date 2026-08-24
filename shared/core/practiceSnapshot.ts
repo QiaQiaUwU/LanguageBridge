@@ -40,6 +40,19 @@ export interface PracticeSnapshot {
   isWrongRound: boolean
   /** 计时用的分段，恢复后接着累计 */
   segments: [number, number][]
+
+  /**
+   * 这一轮已经打完的词（按 word 存，跟上面几个列表一个口径）。
+   *
+   * 场景学习靠它判断「教材里某一课的词是不是都学完了」。不存的话，
+   * 中途退出再接着练，之前学过的词就不算数了 —— 某一课明明学完也不会弹课文。
+   *
+   * 可选：旧快照（这个字段之前不存在）读出来是 undefined，
+   * 恢复那头按空数组处理，不会因为少个字段就整份快照作废。
+   */
+  recentWords?: string[]
+  /** 没有教材时按数量触发场景学习的计数，同样是可选、旧快照按 0 处理 */
+  learnedSinceScenario?: number
 }
 
 function today(): string {
