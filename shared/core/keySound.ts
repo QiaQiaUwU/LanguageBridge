@@ -43,6 +43,19 @@ let cursor = 0
 let loadedName = ''
 let loadFailed = false
 
+/**
+ * 解码好的按键音，用 WebAudio 播。
+ *
+ * `<audio>` 元素那条路有个绕不过去的延迟：文件是外链（TW_SOUND_BASE 是个
+ * 在线资源站），`a.play()` 在数据还没到齐时会等，快速打字时就成了"声音跟不上手"。
+ * 而且 `currentTime = 0` 重置本身在某些浏览器上也要一帧。
+ *
+ * 改成开头 fetch 一次、decodeAudioData 解成 AudioBuffer 留在内存里，
+ * 之后每次按键只是 createBufferSource().start() —— 这是同步调用，没有等待。
+ * 拉不到就退回下面的合成音，跟以前一样。
+ */
+let buffers: AudioBuffer[] = []
+
 /** 对应它的 setAudio：同一音色建多份实例 */
 export function setKeySound(name: string): void {
   if (loadedName === name) return
@@ -51,6 +64,7 @@ export function setKeySound(name: string): void {
   const urls = getAudioFileUrl(use)
   poolLength = urls.length === 1 ? 4 : 1
   pool = []
+  buffers = []
   for (let i = 0; i < poolLength; i++) {
     for (const src of urls) {
       const a = new Audio(TW_SOUND_BASE.replace(/\/$/, '') + src)
@@ -62,6 +76,23 @@ export function setKeySound(name: string): void {
   cursor = 0
   loadedName = name
   loadFailed = false
+  void decodeAll(urls)
+}
+
+/** 把这套音色抓下来解码。失败就算了，playKeySound 会退回 <audio> 或合成音 */
+async function decodeAll(urls: string[]): Promise<void> {
+  try {
+    const ctx = (audioCtx = audioCtx || new AudioContext())
+    const decoded: AudioBuffer[] = []
+    for (const src of urls) {
+      const res = await fetch(TW_SOUND_BASE.replace(/\/$/, '') + src)
+      if (!res.ok) return
+      decoded.push(await ctx.decodeAudioData(await res.arrayBuffer()))
+    }
+    buffers = decoded
+  } catch {
+    /* 解不了就不用它 */
+  }
 }
 
 /** 拉不到音频时的兜底：合成一声键帽响 */
@@ -93,8 +124,27 @@ function synthClick(gain: number) {
 
 /** 对应它的 play：按下标轮流取一个实例播 */
 export function playKeySound(volume = 100): void {
+  const vol = Math.max(0, Math.min(1, volume / 100))
+
+  // 解码好了就走这条：同步起播，没有网络也没有 currentTime 重置的开销
+  if (buffers.length && audioCtx) {
+    try {
+      cursor++
+      const buf = buffers[cursor % buffers.length]
+      const src = audioCtx.createBufferSource()
+      src.buffer = buf
+      const g = audioCtx.createGain()
+      g.gain.value = vol
+      src.connect(g).connect(audioCtx.destination)
+      src.start()
+      return
+    } catch {
+      /* 掉到下面两条兜底 */
+    }
+  }
+
   if (loadFailed || !pool.length) {
-    synthClick(0.22 * Math.max(0, Math.min(1, volume / 100)))
+    synthClick(0.22 * vol)
     return
   }
   cursor++

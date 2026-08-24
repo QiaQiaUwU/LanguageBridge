@@ -18,6 +18,11 @@
 
       <ListeningMaterialsTab v-if="sessionMode === 'materials'" />
 
+      <div v-else-if="!fromWordCore && sessionMode === 'spelling'" class="empty-guide">
+        <p>去词汇中心挑好词再来听写 —— 范围、状态、数量都在那边选。</p>
+        <button class="start-btn" @click="router.push('/words')">去词汇中心</button>
+      </div>
+
       <div v-else-if="!fromWordCore" class="setup-form">
         <div class="form-row book-multiselect">
           <label>词书（可多选，不选=全部单词）</label>
@@ -104,7 +109,15 @@
         <button class="bar-icon" title="设置" @click="showDictSetting = true">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.4 7.4 0 0 0 0-2l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.5 7.5 0 0 0-1.7-1l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5c-.6.3-1.2.6-1.7 1l-2.4-1a.5.5 0 0 0-.6.2L2.7 8.8a.5.5 0 0 0 .1.6L4.9 11a7.4 7.4 0 0 0 0 2l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3c.1.2.4.3.6.2l2.4-1c.5.4 1.1.8 1.7 1l.4 2.5c0 .2.3.4.5.4h3.8c.2 0 .5-.2.5-.4l.4-2.5c.6-.2 1.2-.6 1.7-1l2.4 1c.2.1.5 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
         </button>
-        <button class="bar-icon danger" title="结束听写" @click="finishSession">
+        <!-- 这个 × 原来在两种模式下都调 finishSession，单词模式下点一下就直接出结算页 ——
+             一组没听完就结算没有意义，何况它长在关闭的位置上，谁都会当成"退出"来点。
+             列表模式是一屏铺开、填完统一判，那儿的确需要一个"交卷"，
+             所以按模式分开：列表 = 交卷（还有空的会先问一句），单词 = 退出不结算。 -->
+        <button
+          class="bar-icon danger"
+          :title="viewMode === 'list' ? '交卷并结算' : '退出（不结算）'"
+          @click="viewMode === 'list' ? finishSession() : quitSession()"
+        >
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg>
         </button>
       </div>
@@ -582,7 +595,13 @@ function startSession(list?: WordItem[]) {
   results.value = new Array(words.length).fill(undefined)
   elapsed.value = 0
   phase.value = 'running'
-  wordStore.setStudyList([])
+  /**
+   * 这里原来会 `setStudyList([])`。
+   *
+   * 那一下会让 fromWordCore 在会话进行中翻成 false —— 于是「这一批 N 个词全部听写」
+   * 的文案、continueNext 取剩余词的口径、退出后的去向全都跟着变了意思。
+   * 词已经拷进 session 和 pool 了，没必要在这个时候清；改到组件卸载时清。
+   */
 
   startTimer()
   nextTick(() => {
@@ -758,7 +777,17 @@ function prevWord() {
   nextTick(() => { inputEl.value?.focus(); playCurrent() })
 }
 
-function finishSession() {
+function finishSession(force = false) {
+  /**
+   * 列表模式下还有没填的就别急着结算。
+   *
+   * 那个页面是一屏铺开、填多少判多少，很容易手一滑就交了 ——
+   * 交完看到"已输入 1"还以为是程序算错了。单词模式走到最后一个才会进来，不受影响。
+   */
+  if (!force && viewMode.value === 'list') {
+    const blank = session.value.length - answers.value.filter(a => a.trim()).length
+    if (blank > 0 && !confirm(`还有 ${blank} 个没写，确定现在结算？`)) return
+  }
   if (autoNextTimer) { clearTimeout(autoNextTimer); autoNextTimer = null }
   if (viewMode.value === 'list') judgeAll()
   if (dictSet.value.finishSound) {
@@ -783,7 +812,15 @@ function quitSession() {
   if (autoNextTimer) { clearTimeout(autoNextTimer); autoNextTimer = null }
   stopTimer()
   stopAll()
-  phase.value = 'setup'
+  /**
+   * 回上一个页面，不再回那张"词书 / 状态 / 数量 / 顺序"的表单。
+   *
+   * 词是从词汇中心选好带进来的，退出当然是回词汇中心；
+   * 原来退到 setup 页，等于又让人在另一套筛选器里重选一遍，
+   * 那张表和词汇中心的范围选择是两套做同一件事的东西。
+   */
+  wordStore.setStudyList([])
+  router.back()
 }
 
 function goWrongBook() { router.push('/wrong-book') }
@@ -816,7 +853,7 @@ function next() {
   retypeInput.value = ''
   currentIndex.value++
   if (currentIndex.value >= session.value.length) {
-    finishSession()
+    finishSession(true)   // 单词模式走到底了，直接结算，不用再问
   } else {
     nextTick(() => {
       inputEl.value?.focus()
@@ -926,6 +963,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   stopTimer()
   stopAll()
+  wordStore.setStudyList([])
 })
 </script>
 
@@ -1407,4 +1445,10 @@ onBeforeUnmount(() => {
   border: none; background: var(--r-accent, #8a4b3a); color: #fff;
 }
 
+.empty-guide {
+  margin-top: 28px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 14px;
+  color: var(--r-ink2, #888); font-size: 14px;
+}
+.empty-guide p { margin: 0; }
 </style>

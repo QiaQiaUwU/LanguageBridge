@@ -37,6 +37,8 @@ public/data/word_explanations/
 .old-word_explanations-*/
 
 # ---- 运行时杂项 ----
+# 上次打包的产物体积，用来估下次的进度
+.lb-pack-size
 .app-window/
 port.txt
 

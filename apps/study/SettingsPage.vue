@@ -39,35 +39,6 @@
       </p>
     </section>
 
-    <section class="card">
-      <h3 class="card-title">阅读与划线</h3>
-
-      <div class="op-row">
-        <div class="op-info">
-          <span class="op-name">默认高亮色</span>
-          <span class="op-desc">没选色时用它</span>
-        </div>
-        <div class="hl-picker">
-          <button
-            v-for="c in HL_COLORS"
-            :key="c.name"
-            class="hl-dot"
-            :class="{ on: defaultHl === c.name }"
-            :style="{ background: c.hex }"
-            :title="c.label"
-            @click="defaultHl = c.name"
-          ></button>
-        </div>
-      </div>
-
-      <div class="op-row">
-        <div class="op-info">
-          <span class="op-name">自定义颜色</span>
-          <span class="op-desc">跟悬浮球用同一个颜色</span>
-        </div>
-        <input v-model="customHl" type="color" class="hl-input" title="选一个颜色" />
-      </div>
-    </section>
 
     <section class="card">
       <h3 class="card-title">词库整理</h3>
@@ -89,24 +60,29 @@
         <div class="op-info">
           <span class="op-name">补全释义与音标</span>
           <span class="op-desc">
-            <template v-if="lackBasicCount > 0"><b>{{ lackBasicCount }} 个词条信息不全</b></template>
+            <template v-if="lackBasicTodo > 0"><b>{{ lackBasicTodo }} 个待补</b></template>
+            <template v-if="lackBasicTried > 0">
+              <template v-if="lackBasicTodo > 0"> · </template>{{ lackBasicTried }} 个查过也补不上
+            </template>
+            <template v-if="!lackBasicTodo && !lackBasicTried">信息都是全的</template>
           </span>
+          <label v-if="lackBasicTried > 0" class="op-desc">
+            <input v-model="redoTriedBasic" type="checkbox" /> 连查过补不上的也再试一遍
+          </label>
         </div>
-        <button class="ghost-btn" :disabled="busy" @click="doEnrichBasic">
+        <button class="ghost-btn" :disabled="busy || (!lackBasicTodo && !redoTriedBasic)" @click="doEnrichBasic">
           {{ enriching ? `补全中 ${enrichDone}/${enrichTotal}` : '开始补全' }}
         </button>
       </div>
-      <div v-if="health.noTags > 0" class="op-row">
-        <div class="op-info">
-          <span class="op-name">从释义库回填考纲标签</span>
-          <span class="op-desc">
-            <b>当前 {{ health.noTags }} 个词缺考纲标签。</b>
-          </span>
-        </div>
-        <button class="ghost-btn" :disabled="busy" @click="doBackfillTags">
-          {{ backfilling ? `回填中 ${backfillDone}/${backfillTotal}` : '开始回填' }}
-        </button>
-      </div>
+      <!--
+        「从释义库回填考纲标签」撤了。
+
+        它按「这个词在哪个 book-lib-cat-* 分组里」倒推标签，但一个词往往同时属于
+        好几个考纲；回填只写得进一个，写进去之后那一项就算"有值"，
+        AI 补全那边的规则是「已有值绝不覆盖」，于是这个词的来源永远停在
+        那个不完整的结果上，再也没机会补全。占着位置还不准，不如没有。
+        考纲标签统一交给 AI 补全出，它一次能给出全部来源。
+      -->
       <!-- 重建缓存/索引/数据库体检是出问题时才用的运维操作，
            平时摆在这里只会让人以为需要定期点一下。收进折叠区。 -->
       <button class="fix-toggle" @click="showFixTools = !showFixTools">
@@ -120,6 +96,15 @@
           </button>
         </div>
         <p v-if="rebuildMsg" class="msg">{{ rebuildMsg }}</p>
+        <div class="op-row">
+          <div class="op-info">
+            <span class="op-name">检查词表引用</span>
+            <span class="op-desc">{{ relinkMsg || '词表显示 0 词、点进去说没有可学的词，多半是引用断了。这里清掉失效引用，整表空掉的会点名，重新导入一次即可。' }}</span>
+          </div>
+          <button class="ghost-btn small" :disabled="relinking" @click="doRelinkGroups">
+            {{ relinking ? '检查中…' : '检查并修复' }}
+          </button>
+        </div>
         <div class="op-row">
           <div class="op-info"><span class="op-name">重建词库索引</span></div>
           <button class="ghost-btn small" :disabled="reindexing" @click="doReindex">
@@ -197,9 +182,10 @@
     </section>
 
     <section class="card">
-      <h3 class="card-title">AI 补全（考纲标签 / 话题 / 词根词缀 / 词族）</h3>
+      <h3 class="card-title">AI 补全（词条缺什么补什么）</h3>
       <p class="card-sub">
-        <b>只跑一次</b>，结果写进词条。补过的会跳过，中断了下次接着跑。
+        七个字段一起看：<b>中文释义 / 音标 / 例句 / 考纲来源 / 话题 / 词根词缀 / 词族</b>。
+        每个词只补它缺的那几项，已经有的一律不动。中断了下次接着跑。
       </p>
 
       <div class="op-row">
@@ -224,7 +210,7 @@
       <div class="precheck">
         <div class="precheck-item run">
           <b>{{ aiForce ? aiPreview.pending + aiPreview.attempted : aiPreview.pending }}</b>
-          <span>缺话题或词根的词</span>
+          <span>七项里有缺的词</span>
           <em>约 {{ aiPreview.requests }} 次模型请求</em>
         </div>
         <div class="precheck-item">
@@ -234,13 +220,46 @@
         <div class="precheck-item">
           <b>{{ aiPreview.complete }}</b>
           <span>已经齐了</span>
-          <em>话题和词根都有，永远不会再跑</em>
+          <em>七项都全了，不会再跑</em>
         </div>
+
       </div>
       <label class="check-line">
         <input v-model="aiForce" type="checkbox" :disabled="aiRunning" />
         连"跑过但没填上"的那批也重跑一遍
       </label>
+
+      <!-- 重跑指定项：比"连没填上的也重跑"粒度细得多。
+           选中之后只跑这几项，而且**允许覆盖已有值** —— 用户点它就是嫌现在的值不对。 -->
+      <button class="redo-toggle" @click="showRedo = !showRedo">
+        {{ showRedo ? '收起' : '想重跑某一项？' }}
+      </button>
+      <div v-if="showRedo" class="redo-box">
+        <label v-for="f in ENRICH_FIELD_LABELS" :key="f.key" class="redo-item">
+          <input type="checkbox" :value="f.key" v-model="redoFields" :disabled="aiRunning" />
+          {{ f.label }}
+        </label>
+        <!-- 重跑是**另一个动作**，有自己的按钮。
+             上面那个「开始补全」永远只做"缺什么补什么"，两者互不干扰。 -->
+        <div class="redo-actions">
+          <p class="redo-note">
+            <template v-if="redoFields.length">
+              范围内 <b>{{ aiTargets.length }}</b> 个词全部重跑这
+              {{ redoFields.length }} 项，<b>已有的值会被换掉</b>。
+              约 {{ Math.ceil(aiTargets.length / DEFAULT_BATCH_SIZE) }} 次模型请求。
+            </template>
+            <template v-else>勾上要重跑的项。不勾就用上面那个「开始补全」，它只补缺的。</template>
+          </p>
+          <button
+            class="dark-btn small"
+            :disabled="!redoFields.length || busy"
+            @click="startRedo"
+          >
+            重跑选中项
+          </button>
+        </div>
+      </div>
+
 
       <div v-if="aiRunning || aiDone || aiProgress.lastError" class="progress-block">
         <div class="progress-bar"><div class="progress-fill" :style="{ width: aiPercent + '%' }"></div></div>
@@ -251,6 +270,12 @@
           <template v-if="aiSaved"> · 已存 {{ aiSaved }} 个</template>
         </p>
         <p v-if="aiProgress.lastError" class="ai-err">最近一次失败：{{ aiProgress.lastError }}</p>
+        <!-- 失败率过半基本就是模型选错了（推理模型不吐 JSON），
+             与其让它一路烧完几百次请求，不如当场点破 -->
+        <p v-if="allFailing" class="ai-err">
+          这一轮几乎每批都失败，多半是当前模型不适合结构化输出。先用「试跑一批」验一下，
+          或在 AI 面板里换一个普通对话模型（不带思考过程的）。
+        </p>
       </div>
       <div v-if="aiProbe" class="probe-block" :class="{ bad: !aiProbe.ok }">
         <p class="probe-head">
@@ -268,79 +293,150 @@
     </section>
 
     <section class="card">
-      <h3 class="card-title">词汇宇宙配色</h3>
+      <h3 class="card-title">自定义配色</h3>
       <p class="card-sub">
-        三个上色维度各自独立：<b>按来源</b>（考纲）、<b>按话题</b>、<b>按掌握程度</b>，
+        划线荧光笔和词汇宇宙共用一套色卡。先在色卡里备好颜色，再分给各处。
       </p>
 
-      <div class="dim-tabs">
-        <button
-          v-for="d in colorDims" :key="d.id"
-          class="mode-btn" :class="{ on: colorDim === d.id }"
-          @click="colorDim = d.id"
-        >{{ d.label }}</button>
-        <button class="ghost-btn small" :disabled="!dimHasOverrides" @click="doResetDim">
-          重置这个维度
-        </button>
-      </div>
+      <!-- ① 色卡本体：编辑 / 图片取色。所有颜色都从这里出。 -->
+      <div class="palette-row">
+        <span class="palette-label">色卡</span>
 
-      <p v-if="!colorKeys.length" class="card-sub small">
-        当前词库里还没有这个维度的取值，先跑一遍上面的 AI 补全。
-      </p>
-      <div v-else class="palette-wrap">
-        <div class="palette-row">
-          <span class="palette-label">色卡</span>
+        <template v-if="palEditing">
+          <span v-for="(c, i) in paletteColors" :key="i" class="pal-edit">
+            <input
+              type="color"
+              :value="c"
+              @input="palSet(i, ($event.target as HTMLInputElement).value)"
+            />
+            <button class="pal-x" title="删掉这个色" @click="palDel(i)">×</button>
+          </span>
+          <button class="ghost-btn tiny" @click="palAdd">＋</button>
+          <button class="ghost-btn tiny" @click="palReset">恢复默认</button>
+        </template>
+
+        <template v-else>
           <button
             v-for="c in paletteColors"
             :key="c"
             class="pal-sw"
             :class="{ on: armedColor === c }"
             :style="{ background: c }"
-            :title="armedColor === c ? '已上膛，点下面的分类给它染色' : '点一下上膛'"
+            :title="armedColor === c ? '已上膛，点下面要染色的地方' : '点一下上膛'"
             @click="armedColor = armedColor === c ? '' : c"
           ></button>
-          <span v-if="armedColor" class="palette-hint">已上膛，点下面任意分类给它上色</span>
-        </div>
+        </template>
 
-        <div class="swatch-grid">
-          <div
-            v-for="k in colorKeys"
-            :key="k.key"
-            class="swatch-card"
-            :class="{ armed: !!armedColor }"
-            :title="armedColor ? '点一下染成上膛的颜色' : '点左上角色卡先上膛，或点右下角小圆点自由选色'"
-            @click="armedColor && onPickColor(k.key, armedColor)"
-          >
-            <span class="swatch-name">{{ k.label }}</span>
-            <label class="swatch-free" title="自由选色" @click.stop>
-              <input
-                type="color"
-                :value="k.color"
-                @input="onPickColor(k.key, ($event.target as HTMLInputElement).value)"
-              />
-            </label>
-          </div>
-        </div>
+        <button class="pal-edit-btn" @click="palEditing = !palEditing">
+          {{ palEditing ? '完成' : '编辑' }}
+        </button>
       </div>
 
-      <div class="op-row" style="margin-top:14px">
+      <!-- 多套色卡：调好一套不容易，换主题时不该从头再调 -->
+      <div class="palette-row sets">
+        <select v-model="palSetName" class="pal-select" @change="loadPalSet">
+          <option value="">切换色卡…</option>
+          <option v-for="ps in palSets" :key="ps.name" :value="ps.name">
+            {{ ps.name }}{{ ps.builtin ? '（内置）' : '' }}
+          </option>
+        </select>
+        <input v-model="palNewName" class="pal-name-input" placeholder="给当前这套起个名字" />
+        <button class="ghost-btn tiny" :disabled="!palNewName.trim()" @click="doSavePalSet">另存</button>
+        <button
+          class="ghost-btn tiny"
+          :disabled="!palSetName || palSets.find(p => p.name === palSetName)?.builtin"
+          @click="doDelPalSet"
+        >删掉这套</button>
+      </div>
+
+      <div class="op-row">
         <div class="op-info">
           <span class="op-name">从图片取色</span>
+          <span class="op-desc">取到的颜色并进色卡，不会覆盖已有的</span>
         </div>
         <div class="op-form">
           <input ref="paletteInputEl" type="file" accept="image/*" hidden @change="onPickImage" />
           <button class="ghost-btn small" :disabled="paletteBusy" @click="paletteInputEl?.click()">
             {{ paletteBusy ? '取色中…' : '选择图片' }}
           </button>
-          <button class="dark-btn small" :disabled="!palette.length || !colorKeys.length" @click="doApplyPalette">
-            套到当前维度
-          </button>
+        </div>
+      </div>
+      <p v-if="paletteMsg" class="msg">{{ paletteMsg }}</p>
+
+      <p v-if="armedColor" class="palette-hint armed-tip">
+        已上膛 <span class="armed-dot" :style="{ background: armedColor }"></span>，
+        点下面任意一处就染上去
+      </p>
+
+      <!-- ② 荧光标记 -->
+      <div class="op-row">
+        <div class="op-info">
+          <span class="op-name">划线荧光色</span>
+          <span class="op-desc">阅读时划线用的底色</span>
+        </div>
+        <div class="hl-picker">
+          <button
+            v-for="c in HL_COLORS"
+            :key="c.name"
+            class="hl-dot"
+            :class="{ on: defaultHl === c.name }"
+            :style="{ background: c.hex }"
+            :title="c.label"
+            @click="defaultHl = c.name"
+          ></button>
+          <button
+            class="hl-dot custom"
+            :class="{ on: defaultHl === 'custom', armed: !!armedColor }"
+            :style="{ background: customHl }"
+            title="色卡上膛后点这里，把颜色染过来"
+            @click="armedColor ? dyeHighlight() : (defaultHl = 'custom')"
+          ></button>
         </div>
       </div>
 
-      <div v-if="palette.length" class="palette-strip">
+      <!-- ③ 词汇宇宙：三个维度各自一套取值 -->
+      <div class="dim-head">
+        <span class="op-name">词汇宇宙</span>
+        <div class="dim-tabs">
+          <button
+            v-for="d in colorDims"
+            :key="d.id"
+            class="dim-tab"
+            :class="{ on: colorDim === d.id }"
+            @click="colorDim = d.id"
+          >{{ d.label }}</button>
+          <button class="ghost-btn tiny" @click="doResetDim">重置这个维度</button>
+          <button
+            class="ghost-btn tiny"
+            :disabled="!paletteColors.length || !colorKeys.length"
+            @click="doApplyPalette"
+          >整组套上</button>
+        </div>
       </div>
-      <p v-if="paletteMsg" class="msg">{{ paletteMsg }}</p>
+
+      <p v-if="!colorKeys.length" class="card-sub small">
+        当前词库里还没有这个维度的取值，先跑一遍上面的 AI 补全。
+      </p>
+      <div v-else class="swatch-grid">
+        <div
+          v-for="k in colorKeys"
+          :key="k.key"
+          class="swatch-card"
+          :class="{ armed: !!armedColor }"
+          :title="armedColor ? '点一下染成上膛的颜色' : '点色卡先上膛，或点右下角小圆点自由选色'"
+          @click="armedColor && onPickColor(k.key, armedColor)"
+        >
+          <span class="swatch-name">{{ k.label }}</span>
+          <label class="swatch-free" title="自由选色" @click.stop>
+            <input
+              type="color"
+              :value="k.color"
+              @input="onPickColor(k.key, ($event.target as HTMLInputElement).value)"
+            />
+          </label>
+          <span class="swatch-bar" :style="{ background: k.color }"></span>
+        </div>
+      </div>
     </section>
 
     <section class="card">
@@ -424,13 +520,18 @@ import { fetchTwDictList, fetchTwDict, buildTwPatch, twToWordItem } from '@/shar
 import { inspectDatabase } from '@/shared/core/database'
 import { buildBackup, restoreBackup } from '@/shared/core/backup'
 import type { WordItem } from '@/shared/types/WordItem'
-import { enrichWords, backfillTagsFromLibrary } from '@/shared/core/enrichment'
+import { enrichWords } from '@/shared/core/enrichment'
 import { aiRunState, startAiRun, stopAiRun, aiRunStuck } from '@/shared/core/aiEnrichRunner'
 import {
   countNeedAiEnrich, previewAiEnrich, checkLibraryHealth, probeAiEnrich, DEFAULT_BATCH_SIZE,
-  type EnrichAiProgress, type LibraryHealth
+  ENRICH_FIELD_LABELS,
+  type EnrichAiProgress, type LibraryHealth, type EnrichField
 } from '@/shared/core/aiEnrich'
 import { SOURCE_ORDER } from '@/apps/word-core/components/graphColors'
+import {
+  readPalette, savePalette, resetPalette, mergeIntoPalette,
+  listPaletteSets, savePaletteSet, deletePaletteSet
+} from '@/shared/core/sharedPalette'
 import { reminders as reminderList, addReminder, removeReminder, loadReminders } from '@/shared/core/agentActions'
 
 /* ---------- 定时提醒 ---------- */
@@ -665,44 +766,40 @@ async function runTwMerge() {
     twProgress.value = ''
   }
 }
-const backfilling = ref(false)
-const backfillDone = ref(0)
-const backfillTotal = ref(0)
 const dupCount = ref(0)
 const dupChecked = ref(false)
 const tagBookId = ref('')
 const tagValue = ref('')
 
-const busy = computed(() => deduping.value || enriching.value || aiRunning.value || backfilling.value || aiProbing.value)
+const busy = computed(() => deduping.value || enriching.value || aiRunning.value || aiProbing.value)
 
-async function doBackfillTags() {
-  backfilling.value = true
-  tidyMsg.value = ''
-  backfillDone.value = 0
-  try {
-    const changed = await backfillTagsFromLibrary(wordStore.words, wordStore.groups, p => {
-      backfillDone.value = p.done
-      backfillTotal.value = p.total
-    })
-    await persist(changed)
-    tidyMsg.value = changed.length
-      ? `回填完成：${changed.length} 个词补上了考纲标签，现在可以按考试筛选、词汇宇宙也能按来源上色了。`
-      : '这些词不属于任何分类子词库（book-lib-cat-*），所以推导不出考纲标签。如果它们是你自己导入的词表，可以用下面的「批量改标签」手动打。'
-  } catch (e) {
-    tidyMsg.value = `回填出错：${e instanceof Error ? e.message : String(e)}`
-  } finally {
-    backfilling.value = false
-  }
-}
 
 const health = computed<LibraryHealth>(() => checkLibraryHealth(wordStore.words))
 
-const lackBasicCount = computed(
-  () =>
-    wordStore.words.filter(
-      w => !w.phonetic || !w.example_sentences?.length || !w.meanings?.[0]?.partOfSpeech
-    ).length
+/**
+ * 「信息不全」拆成两档。
+ *
+ * 原来只有一个数：凡是缺音标/例句/词性的都算，点了补全之后
+ * 那些词典和接口都查不到的词（生僻词、词组、专有名词）依然缺，
+ * 数字一点不降 —— 看着像功能没生效，实际是每次都在重查这批查不到的。
+ * 现在按有没有查过分开，只有第一档值得跑。
+ */
+function lacksBasic(w: WordItem): boolean {
+  return !w.phonetic || !w.example_sentences?.length || !w.meanings?.[0]?.partOfSpeech
+}
+const lackBasicTodo = computed(
+  () => wordStore.words.filter(w => lacksBasic(w) && !w.basicEnrichedAt).length
 )
+const lackBasicTried = computed(
+  () => wordStore.words.filter(w => lacksBasic(w) && !!w.basicEnrichedAt).length
+)
+const redoTriedBasic = ref(false)
+
+/** 跑了一批以上、而且几乎全挂 —— 这种情况继续跑下去只是烧额度 */
+const allFailing = computed(() => {
+  const p = aiProgress.value
+  return p.done >= 24 && p.failed >= p.done * 0.8
+})
 
 const taggedCount = computed(() => wordStore.words.filter(w => w.tags?.length).length)
 const topicCount = computed(() => wordStore.words.filter(w => w.topics?.length).length)
@@ -733,10 +830,12 @@ async function doDedupe() {
 
 async function doEnrichBasic() {
   const targets = wordStore.words.filter(
-    w => !w.phonetic || !w.example_sentences?.length || !w.meanings?.[0]?.partOfSpeech
+    w => lacksBasic(w) && (redoTriedBasic.value || !w.basicEnrichedAt)
   )
   if (!targets.length) {
-    tidyMsg.value = '所有词条的基础信息都是全的，不用补。'
+    tidyMsg.value = lackBasicTried.value
+      ? '剩下的都查过了，词典和接口补不出来。勾上重试才会再跑一遍。'
+      : '所有词条的基础信息都是全的，不用补。'
     return
   }
   enriching.value = true
@@ -746,11 +845,72 @@ async function doEnrichBasic() {
   try {
     const changed = await enrichWords(targets, p => { enrichDone.value = p.done })
     await persist(changed)
-    tidyMsg.value = `补全完成：更新了 ${changed.length} 个词条。`
+    const still = targets.filter(lacksBasic).length
+    tidyMsg.value = still
+      ? `补全完成：更新了 ${changed.length} 个词条，其中 ${still} 个查不到，已标记为查过。`
+      : `补全完成：更新了 ${changed.length} 个词条。`
   } catch (e) {
     tidyMsg.value = `补全出错：${e instanceof Error ? e.message : String(e)}`
   } finally {
     enriching.value = false
+  }
+}
+
+/* ---------- 词表引用修复 ---------- */
+
+const relinking = ref(false)
+const relinkMsg = ref('')
+
+/**
+ * 把每个词表的 wordIds 重新指向现存的词条。
+ *
+ * 词表存的是 id，而「合并重复词条」「重建缓存」这些操作会让一部分 id 消失。
+ * 引用一断，词表在主页显示 0 词、点进去学习是「没有可学的词」、
+ * 配套教材也因为拿不到词而不会生成 —— 但词其实都还在库里，只是对不上号了。
+ *
+ * **能做的和不能做的**：词表只存 id，不存单词本身，所以 id 一旦失效，
+ * 已经无从知道它原来指的是哪个词 —— 这一步只能把死引用清掉，让词表数字变准，
+ * 不能凭空恢复。整表清空的会点名，那种只能重新导入一次（词都还在库里，
+ * 重新导入不会产生重复词条，只是重新建一份清单）。
+ *
+ * 真正的解法在源头：合并重复词条时同步改所有词表的引用。
+ * 那一步现在只修了一部分（合并提示里的"修正了 N 处词表引用"），
+ * 是下一轮该补的地方。
+ */
+async function doRelinkGroups() {
+  relinking.value = true
+  relinkMsg.value = ''
+  try {
+    const byId = new Map(wordStore.words.map(w => [w.id, w]))
+    const byWord = new Map<string, string>()
+    for (const w of wordStore.words) {
+      const k = w.word.toLowerCase()
+      if (!byWord.has(k)) byWord.set(k, w.id)
+    }
+
+    let fixedGroups = 0
+    let relinked = 0
+    let dropped = 0
+
+    const broken: string[] = []
+    for (const g of wordStore.groups) {
+      const alive = g.wordIds.filter(id => byId.has(id))
+      if (alive.length === g.wordIds.length) continue
+      dropped += g.wordIds.length - alive.length
+      fixedGroups++
+      if (alive.length === 0) broken.push(g.name)
+      await wordStore.updateGroup(g.id, { wordIds: alive })
+    }
+    void byWord   // 暂时用不到，见下面说明
+
+    relinkMsg.value = fixedGroups
+      ? `清掉 ${dropped} 个失效引用，涉及 ${fixedGroups} 个词表。` +
+        (broken.length ? `其中「${broken.slice(0, 3).join('、')}」已经一个词都不剩，需要重新导入。` : '')
+      : '所有词表的引用都是好的，不用修。'
+  } catch (e) {
+    relinkMsg.value = '检查出错：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    relinking.value = false
   }
 }
 
@@ -823,12 +983,30 @@ async function persist(changed: WordItem[]) {
   await wordDB.saveWordsBulk(JSON.parse(JSON.stringify(changed)))
   await be.beBulkSaveWords(changed)
   try {
+    /**
+     * 回写释义库时要带上全部七项。
+     *
+     * 之前只回写了考纲/话题/词根/词族四项 —— 释义、音标、例句只进了
+     * data/words.json 这个缓存。而 resources/word_explanations/ 才是准，
+     * 下次重扫或重建缓存就把缓存里那份盖回去了，
+     * 表现出来就是「跑完一千七百多，刷新一下数字一点没变」，白跑。
+     *
+     * meanings 要转成释义库的 pos_definitions 结构（pos / definition_zh /
+     * definition_en），字段名对不上就等于没写。
+     */
     await be.bePatchWordLibrary(changed.map(w => ({
       word: w.word,
       exam_tags: w.tags,
       topics: w.topics,
       morphemes: w.morphemes,
-      word_family: w.word_family
+      word_family: w.word_family,
+      phonetic: w.phonetic,
+      pos_definitions: (w.meanings || []).map(m => ({
+        pos: m.partOfSpeech || '',
+        definition_zh: m.chinese || '',
+        definition_en: (m as any).english || ''
+      })),
+      example_sentences: w.example_sentences || []
     })))
   } catch {
   }
@@ -840,6 +1018,8 @@ const aiDone = aiRunState.finished
 const aiSaved = aiRunState.saved
 const aiProgress = aiRunState.progress
 const aiForce = ref(false)
+const showRedo = ref(false)
+const redoFields = ref<EnrichField[]>([])
 
 const aiStuck = ref(false)
 let stuckTimer: ReturnType<typeof setInterval> | null = null
@@ -877,18 +1057,15 @@ const aiTargets = computed<WordItem[]>(() => {
   return wordStore.words.filter(w => ids.has(w.id))
 })
 
-const backfillableIds = computed(() => {
-  const s = new Set<string>()
-  for (const g of wordStore.groups) {
-    if (!g.id.startsWith('book-lib-cat-')) continue
-    for (const id of g.wordIds) s.add(id)
-  }
-  return s
-})
-const canBackfillTags = (w: WordItem) => backfillableIds.value.has(w.id)
+/**
+ * 这里原来有 canBackfillTags：判断一个词能不能靠分组关系推出考纲标签，
+ * 能推的就不送给 AI（省一次请求）。
+ * 回填功能撤掉之后这个"能推"不再成立 —— 分组推出来的标签本身就不全，
+ * 让它挡住 AI 补全等于让这些词的来源永远残缺。现在一律交给 AI。
+ */
 
 const aiPreviewLive = computed(() =>
-  previewAiEnrich(aiTargets.value, aiForce.value, DEFAULT_BATCH_SIZE, canBackfillTags)
+  previewAiEnrich(aiTargets.value, aiForce.value, DEFAULT_BATCH_SIZE)
 )
 const aiPreviewFrozen = ref<ReturnType<typeof previewAiEnrich> | null>(null)
 watch(aiRunning, run => { aiPreviewFrozen.value = run ? aiPreviewLive.value : null })
@@ -898,14 +1075,33 @@ const aiPercent = computed(() =>
   aiProgress.value.total ? Math.round((aiProgress.value.done / aiProgress.value.total) * 100) : 0
 )
 
+/** 补缺：范围内缺字段的词，只补缺的那几项。跟重跑互不影响 */
 async function startAi() {
   await startAiRun({
     targets: aiTargets.value,
     force: aiForce.value,
-    canBackfillTags,
     onBatchDone: persist
   })
   if (aiRunState.errorMsg.value) tidyMsg.value = `AI 补全出错：${aiRunState.errorMsg.value}`
+}
+
+/**
+ * 重跑：范围内**所有**词的指定几项，覆盖已有值。
+ *
+ * 单独一个动作、单独一个按钮 —— 它跟「开始补全」的取词范围和写入规则都不一样，
+ * 共用一个按钮的话，勾没勾复选框会让同一个按钮做两件事，很容易误操作。
+ */
+async function startRedo() {
+  const fields = [...redoFields.value]
+  if (!fields.length) return
+  const names = ENRICH_FIELD_LABELS.filter(f => fields.includes(f.key)).map(f => f.label).join('、')
+  if (!confirm(`把范围内 ${aiTargets.value.length} 个词的「${names}」全部重跑一遍？\n现有的值会被新结果覆盖。`)) return
+  await startAiRun({
+    targets: aiTargets.value,
+    redo: fields,
+    onBatchDone: persist
+  })
+  if (aiRunState.errorMsg.value) tidyMsg.value = `重跑出错：${aiRunState.errorMsg.value}`
 }
 
 function stopAi() {
@@ -920,19 +1116,71 @@ const colorDims = [
 ]
 const colorDim = ref<ColorDimension>('source')
 
-const extraPalette = computed<string[]>(() => palette.value || [])
 const armedColor = ref('')
-const paletteColors = computed(() => {
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const c of [...extraPalette.value, ...colorKeys.value.map(k => k.color)]) {
-    const v = String(c || '').toLowerCase()
-    if (!v || seen.has(v)) continue
-    seen.add(v)
-    out.push(c)
-  }
-  return out.slice(0, 14)
-})
+
+/**
+ * 色卡本体。持久化，划线和词汇宇宙共用同一组。
+ *
+ * 之前这里是个 computed：把"本次取色的结果"和"当前维度已用的颜色"拼起来，
+ * 刷新就没、也改不了。现在是实打实的一组色，存 localStorage，
+ * 可以逐个改、逐个删、也能从图片补进来。
+ */
+const paletteColors = ref<string[]>(readPalette())
+const palEditing = ref(false)
+
+function palSet(i: number, hex: string) {
+  const next = [...paletteColors.value]
+  next[i] = hex
+  paletteColors.value = next
+  savePalette(next)
+}
+function palDel(i: number) {
+  const next = paletteColors.value.filter((_, k) => k !== i)
+  paletteColors.value = next
+  savePalette(next)
+}
+/** 把上膛的颜色染到划线自定义色上，并切过去用它 */
+function dyeHighlight() {
+  if (!armedColor.value) return
+  customHl.value = armedColor.value
+  defaultHl.value = 'custom'
+  armedColor.value = ''
+}
+
+function palAdd() {
+  const next = [...paletteColors.value, '#8fb0c9']
+  paletteColors.value = next
+  savePalette(next)
+}
+const palSets = ref(listPaletteSets())
+const palSetName = ref('')
+const palNewName = ref('')
+
+function loadPalSet() {
+  const hit = palSets.value.find(p => p.name === palSetName.value)
+  if (!hit) return
+  paletteColors.value = [...hit.colors]
+  savePalette(hit.colors)
+}
+function doSavePalSet() {
+  const name = palNewName.value.trim()
+  if (!name) return
+  savePaletteSet(name, paletteColors.value)
+  palSets.value = listPaletteSets()
+  palSetName.value = name
+  palNewName.value = ''
+}
+function doDelPalSet() {
+  if (!palSetName.value) return
+  deletePaletteSet(palSetName.value)
+  palSets.value = listPaletteSets()
+  palSetName.value = ''
+}
+
+function palReset() {
+  resetPalette()
+  paletteColors.value = readPalette()
+}
 watch(colorDim, () => { armedColor.value = '' })
 const colorTick = ref(0)
 
@@ -992,7 +1240,6 @@ function doResetDim() {
 }
 
 const paletteInputEl = ref<HTMLInputElement | null>(null)
-const palette = ref<string[]>([])
 const paletteBusy = ref(false)
 const paletteMsg = ref('')
 
@@ -1004,19 +1251,20 @@ async function onPickImage(e: Event) {
   paletteBusy.value = true
   paletteMsg.value = ''
   try {
-    const cols = await extractPaletteFromImage(file)
-    palette.value = ensureVisibleOnDark(cols)
-    paletteMsg.value = `取到 ${palette.value.length} 个颜色，点"套到当前维度"应用。`
+    const cols = ensureVisibleOnDark(await extractPaletteFromImage(file))
+    // 并进色卡而不是替换：换一张图取色时，上一张里挑中的色不该凭空消失
+    paletteColors.value = mergeIntoPalette(cols)
+    paletteMsg.value = `取到 ${cols.length} 个颜色，已并进色卡。点色块上膛，再点要染色的地方。`
   } catch (err) {
-    palette.value = []
     paletteMsg.value = err instanceof Error ? err.message : '取色失败'
   } finally {
     paletteBusy.value = false
   }
 }
 
+
 function doApplyPalette() {
-  applyPalette(colorDim.value, colorKeys.value.map(k => k.key), palette.value)
+  applyPalette(colorDim.value, colorKeys.value.map(k => k.key), paletteColors.value)
   colorTick.value++
   paletteMsg.value = '已应用。不满意可以单独点某个色块微调，或者点"重置这个维度"回到出厂配色。'
 }
@@ -1292,4 +1540,89 @@ onMounted(async () => {
   border: 1px solid var(--r-line, #e5e7eb); border-radius: 8px; background: transparent;
   color: var(--r-ink, #1f2328);
 }
+.redo-toggle {
+  border: none; background: none; padding: 0; margin-top: 8px;
+  cursor: pointer; font-family: inherit; font-size: 12.5px;
+  color: var(--r-accent, #8a4b3a);
+  &:hover { text-decoration: underline; }
+}
+.redo-box {
+  margin-top: 8px; padding: 10px 12px;
+  border: 1px solid var(--r-border, #e6e6e6); border-radius: 10px;
+  display: flex; flex-wrap: wrap; gap: 10px 16px;
+}
+.redo-item { display: flex; align-items: center; gap: 5px; font-size: 13px; }
+.redo-note {
+  flex-basis: 100%; margin: 2px 0 0;
+  font-size: 12px; line-height: 1.6; color: var(--r-ink2, #9aa0a6);
+}
+.redo-actions {
+  flex-basis: 100%; display: flex; align-items: center; gap: 12px;
+  margin-top: 4px;
+}
+.redo-actions .redo-note { flex: 1; margin: 0; }
+.pal-edit {
+  position: relative; display: inline-flex;
+  input[type="color"] {
+    width: 26px; height: 26px; padding: 0; border: none;
+    border-radius: 7px; cursor: pointer; background: none;
+  }
+}
+.pal-x {
+  position: absolute; right: -4px; top: -5px;
+  width: 14px; height: 14px; line-height: 12px; text-align: center;
+  border: none; border-radius: 50%; cursor: pointer;
+  background: var(--r-ink2, #9aa0a6); color: #fff; font-size: 11px; padding: 0;
+}
+.pal-edit-btn {
+  margin-left: auto; border: none; background: none; cursor: pointer;
+  font-family: inherit; font-size: 12px; color: var(--r-accent, #8a4b3a);
+  &:hover { text-decoration: underline; }
+}
+.hl-dot.custom { outline: 1.5px dashed var(--r-border, #d5d5d5); outline-offset: 2px; }
+.hl-dot.custom.armed { outline-color: var(--r-accent, #8a4b3a); }
+.ghost-btn.tiny { padding: 3px 9px; font-size: 12px; border-radius: 7px; }
+.dim-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid var(--r-border, #eee);
+}
+.dim-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.dim-tab {
+  border: 1px solid var(--r-border, #e0e0e0); background: transparent;
+  border-radius: 8px; padding: 4px 11px; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; color: var(--r-ink2, #777);
+  &.on {
+    background: var(--r-accent, #8a4b3a); border-color: var(--r-accent, #8a4b3a); color: #fff;
+  }
+}
+.armed-tip { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; }
+.armed-dot {
+  display: inline-block; width: 13px; height: 13px; border-radius: 4px;
+  vertical-align: middle;
+}
+.palette-row.sets { margin-top: 8px; gap: 8px; }
+.pal-select, .pal-name-input {
+  border: 1px solid var(--r-border, #e0e0e0); border-radius: 8px;
+  padding: 4px 8px; font-family: inherit; font-size: 12.5px;
+  background: transparent; color: var(--r-ink, #1f2328);
+}
+.pal-name-input { width: 150px; }
+.link-btn {
+  border: none; background: none; padding: 0; cursor: pointer;
+  font-family: inherit; font-size: inherit; color: var(--r-accent, #8a4b3a);
+  &:hover { text-decoration: underline; }
+}
+.dirty-box {
+  margin-top: 10px; padding: 10px 12px;
+  border: 1px solid var(--r-border, #eee); border-radius: 10px;
+}
+.dirty-note { margin: 0 0 8px; font-size: 12px; line-height: 1.6; color: var(--r-ink2, #888); }
+.dirty-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.dirty-chip {
+  padding: 2px 8px; border-radius: 6px; font-size: 12px;
+  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #777);
+}
+.dirty-acts { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.dirty-warn { font-size: 12px; color: var(--r-ink2, #9aa0a6); }
 </style>

@@ -1638,6 +1638,29 @@ function resize() {
 
 let resizeObserver: ResizeObserver | null = null
 
+/**
+ * 屏幕像素比变了也要重算一次。
+ *
+ * 三维拾取是拿鼠标位置在画布里的偏移去发射线的，它依赖渲染器当前的尺寸。
+ * ResizeObserver 只在**容器尺寸**变化时响；把窗口拖到另一块缩放比不同的
+ * 显示器、或者改了系统/浏览器缩放，容器的 CSS 尺寸可能一点没变，
+ * 但底下的像素比变了 —— 渲染器还按旧比例算，鼠标就会"指着这个选中旁边那个"。
+ */
+let dprQuery: MediaQueryList | null = null
+function watchDpr() {
+  try {
+    dprQuery?.removeEventListener('change', onDprChange)
+    dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    dprQuery.addEventListener('change', onDprChange)
+  } catch {
+    /* 老浏览器不支持就算了 */
+  }
+}
+function onDprChange() {
+  resize()
+  watchDpr()
+}
+
 function onDrillKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && drillLevel.value > 0) {
     e.stopPropagation()
@@ -1687,6 +1710,7 @@ onMounted(async () => {
   initStarfield()
   resizeObserver = new ResizeObserver(() => resize())
   resizeObserver.observe(containerEl.value)
+  watchDpr()
 })
 let unsubColor: (() => void) | null = null
 onMounted(() => { unsubColor = onColorChange(() => updateData()) })
@@ -1697,6 +1721,7 @@ onUnmounted(() => {
   if (fitTimer) clearTimeout(fitTimer)
   if (settleTimer) clearTimeout(settleTimer)
   resizeObserver?.disconnect()
+  try { dprQuery?.removeEventListener('change', onDprChange) } catch { /* 忽略 */ }
   stopStarfield()
   graph?._destructor?.()
   graph = null

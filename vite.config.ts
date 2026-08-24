@@ -99,7 +99,17 @@ export default defineConfig({
         }
       },
       maxParallelFileOps: 2
-    }
+    },
+
+    /**
+     * 关掉"大于 500kB 就警告"那条提示。
+     *
+     * 大块已经按库拆开了（three / 3d-force-graph / pdfjs / mammoth 各自成块），
+     * 剩下的确实就是那么大 —— 三维图和 PDF 解析本来就是几百 kB 起。
+     * 这是本地跑的桌面应用，不是要抢首屏的网页，
+     * 每次构建都刷一屏黄字只会淹掉真正的报错。
+     */
+    chunkSizeWarningLimit: 1200
   },
 
   optimizeDeps: {

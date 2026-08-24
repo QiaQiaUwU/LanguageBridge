@@ -1,5 +1,5 @@
 import { ref, readonly } from 'vue'
-import { enrichWordsWithAi, type EnrichAiProgress } from './aiEnrich'
+import { type EnrichField, enrichWordsWithAi, type EnrichAiProgress } from './aiEnrich'
 import type { WordItem } from '@/shared/types/WordItem'
 
 const running = ref(false)
@@ -13,6 +13,8 @@ let stopFlag = false
 export interface StartOptions {
   targets: WordItem[]
   force?: boolean
+  /** 只重跑这几项 */
+  redo?: EnrichField[]
   canBackfillTags?: (w: WordItem) => boolean
   onBatchDone: (batch: WordItem[]) => Promise<void>
 }
@@ -47,6 +49,7 @@ export async function startAiRun(opts: StartOptions): Promise<void> {
       {
         shouldStop: () => stopFlag,
         force: opts.force,
+        redo: opts.redo,
         canBackfillTags: opts.canBackfillTags,
         onBatchDone: async batch => {
           await opts.onBatchDone(batch)

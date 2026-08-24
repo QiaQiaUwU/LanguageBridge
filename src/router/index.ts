@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { tasks } from '@/shared/core/taskCenter'
 
 import WordCore from '../../apps/word-core/WordCore.vue'
 import HomePage from '../../apps/study/HomePage.vue'
@@ -102,6 +103,28 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+/**
+ * 教材还在生成时，学习页直接进不去。
+ *
+ * 之前只是把主页那个按钮置灰 —— 可进学习页的路不止那一条
+ * （词汇中心的范围弹窗、生词本/错词本的「练这批」、浏览器前进后退、
+ * 直接敲地址），随便哪条都能绕过去，进去之后又只能自己退出来。
+ * 拦在路由这一层，所有入口一次管住。
+ *
+ * 只拦学习页；听写、测试、消消乐不依赖教材，照常进。
+ */
+router.beforeEach((to, from, next) => {
+  if (to.path !== '/study') return next()
+  const running = tasks.some(
+    t => t.status === 'running' && String(t.id || '').startsWith('syllabus')
+  )
+  if (!running) return next()
+
+  // 已经在学习页里（比如刷新）就别把人踢走，那样更莫名其妙
+  if (from.path === '/study') return next(false)
+  next(from.path && from.path !== '/' ? false : '/home')
 })
 
 export default router

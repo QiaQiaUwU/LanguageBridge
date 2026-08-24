@@ -271,8 +271,17 @@
               <label class="sb-item" title="句子下面出现输入框，自己把这句写出来">
                 <input v-model="reciteMode" type="checkbox" /> 复述
               </label>
-              <button v-if="recCount" class="ghost-btn small" title="把录下的句子连起来听一遍" @click="playAllRecordings">
-                连听 {{ recCount }}
+              <!-- 放什么：原声 / 自己的录音 / 原声接录音。
+                   这儿原来是个「连听 N」按钮，一有录音就冒出来把别的控件挤掉，
+                   而且它只会整篇拼一遍播，跟循环、速度、停顿都不搭。
+                   挪进下拉之后，逐句播放和整篇循环都按这个来源走。 -->
+              <select v-if="recCount" v-model="playSource" class="sl-pick" title="放什么">
+                <option value="origin">原声</option>
+                <option value="mine">我的录音</option>
+                <option value="both">原声 → 我的</option>
+              </select>
+              <button v-if="recCount" class="ghost-btn small" title="逐句对比原声和自己读的时长" @click="showRecCompare = true">
+                对比
               </button>
               <span class="sb-idx">{{ playingIdx >= 0 ? `${playingIdx + 1}/${article.sentences.length}` : '' }}</span>
             </span>
@@ -324,7 +333,8 @@
           <p v-if="showChinese && s.zh" class="shadow-zh">{{ s.zh }}</p>
 
 
-          <div class="shadow-controls">
+          <!-- 同上：控制条里的按钮各自 stop 过了，但按钮之间的空白没有 -->
+          <div class="shadow-controls" @click.stop>
             <!-- 跟读就是录音，一个按钮：录下声音 + 同时识别打分。
                  之前拆成「开始跟读」和小麦克风两个，各做一半 ——
                  点前者只识别不录音（所以看不到音量波动），点后者只录音不打分。 -->
@@ -379,7 +389,9 @@
                只用一个箭头收放，不加多余文案。 -->
           <!-- 一直在，只是默认折起来。之前写成"有内容才显示"，
                等于没内容时压根找不到入口 -->
-          <div v-if="reciteMode" class="recite-wrap">
+          <!-- 整块吞掉点击：这一行的 @click 是「跳到这句并播放」，
+               而点输入框、点折叠箭头都会冒泡上去，本意是想打字，结果开始朗读 -->
+          <div v-if="reciteMode" class="recite-wrap" @click.stop>
             <button class="recite-toggle" :title="reciteOpen[i] ? '收起' : '展开'" @click="toggleRecite(i)">
               {{ reciteOpen[i] ? '▾' : '▸' }}
               <span v-if="!reciteOpen[i]" class="recite-peek">{{ reciteDrafts[i] }}</span>
@@ -392,7 +404,6 @@
                 @input="autoGrow"
                 @blur="saveReciteDrafts"
               ></textarea>
-              <p v-if="!showEnglish" class="recite-answer">原文：{{ s.en }}</p>
             </template>
           </div>
         </div>
@@ -421,6 +432,12 @@
           <span class="lib-status">已关联「{{ article.audioFileName }}」</span>
           <button class="ghost-btn small" @click="doPickAudio">换一个</button>
           <button class="ghost-btn small" @click="doClearAudio">取消关联</button>
+        </div>
+        <!-- 关联还在但读不到：以前这里什么都不显示，
+             整个播放器和对轴列表凭空消失，看着像功能坏了 -->
+        <div v-if="article.audioFileName && !audioObjectUrl" class="align-audio-row">
+          <span class="err-text">读不到这个文件，可能被移动或删掉了</span>
+          <button class="ghost-btn small" @click="doPickAudio">重新选择</button>
         </div>
         <p v-if="alignMessage" class="err-text">{{ alignMessage }}</p>
 
@@ -928,7 +945,8 @@ import { alignJobs } from '@/shared/core/alignJob'
 import { taskFor, startTask, updateTask, finishTask, failTask, endTask } from '@/shared/core/taskCenter'
 import WordLookupPopover from '@/apps/word-core/components/WordLookupPopover.vue'
 import * as be from '@/shared/core/backendClient'
-import { pickArticleAudio, getArticleAudioFile, clearArticleAudio, audioPickerSupported, saveArticleAudioBlob } from '@/shared/core/audioAlign'
+import { pickArticleAudioFile, getArticleAudio, getArticleAudioFile, clearArticleAudio, audioPickerSupported, saveArticleAudioBlob } from '@/shared/core/audioAlign'
+import { uploadArticleAudio } from '@/shared/core/articleAudio'
 import { parseSubtitles, alignCuesToSentences } from '@/shared/core/subtitles'
 
 function splitIntoWordTokens(segment: string, onWordClick: (text: string, event: MouseEvent) => void) {
@@ -3136,6 +3154,17 @@ onBeforeUnmount(() => {
  */
 type LoopMode = 'none' | 'sentence' | 'article' | 'list'
 const loopMode = ref<LoopMode>((localStorage.getItem('lb-loop-mode') as LoopMode) || 'none')
+
+/**
+ * 播放源：放原声、放自己的录音、还是原声接着自己的。
+ *
+ * 只在录过音的文章上出现（播放条里那个下拉）。逐句播放和连续播放都按它走 ——
+ * 「只听自己录的」于是就是「播放源选我的录音 + 循环方式选本篇循环」，
+ * 不需要另做一个"连听"按钮。
+ */
+type PlaySource = 'origin' | 'mine' | 'both'
+const playSource = ref<PlaySource>((localStorage.getItem('lb-play-source') as PlaySource) || 'origin')
+watch(playSource, v => localStorage.setItem('lb-play-source', v))
 watch(loopMode, v => localStorage.setItem('lb-loop-mode', v))
 
 /** 兼容原有逻辑：单句循环 / 连章 由 loopMode 推导 */
@@ -3238,6 +3267,13 @@ watch(reciteMode, v => localStorage.setItem('lb-recite-mode', v ? '1' : '0'))
 function jumpShadow(i: number) {
   const list = article.value?.sentences || []
   const target = Math.max(0, Math.min(list.length - 1, i))
+  /**
+   * 已经在放这一句就什么都不做。
+   *
+   * 原来每点一下都重新起一遍：点两下就是两条 timeupdate 监听、两个定时器，
+   * 各自到点又各自 playFrom，听感就是同一句被反复重放、越点越乱。
+   */
+  if (continuousOn.value && playingIdx.value === target) return
   continuousOn.value = true
   if (shadowDrill.value) playThenRecord(target)
   else playFrom(target)
@@ -3614,18 +3650,86 @@ function scrollShadowIntoView(i: number) {
 watch(viewSubMode, m => { if (m !== 'shadow') stopContinuous() })
 onBeforeUnmount(stopContinuous)
 
-async function loadArticleAudio() {
-  if (!article.value) return
+/**
+ * 取当前文章的音频文件（给需要 File 的地方用，比如上传去 MFA 对齐）。
+ * 优先后端那份，其次才是历史遗留的 IndexedDB / 句柄。
+ */
+async function currentAudioFile(): Promise<File | null> {
+  const a = article.value
+  if (!a) return null
+  if (a.audioUrl) {
+    try {
+      const res = await fetch(a.audioUrl)
+      if (res.ok) {
+        const blob = await res.blob()
+        return new File([blob], a.audioFileName || 'audio.wav', { type: blob.type })
+      }
+    } catch { /* 取不到就往下走老路径 */ }
+  }
+  return await getArticleAudioFile(a.id)
+}
+
+/**
+ * 关联的音频还在、但这次打开需要重新授权。
+ * 只有这一种情况才显示「重新授权」按钮：文件根本没关联时不该出现。
+ */
+const audioNeedsPermission = ref(false)
+
+async function loadArticleAudio(interactive = false) {
+  const a = article.value
+  if (!a) return
   alignMessage.value = ''
-  if (article.value.audioUrl) {
+  audioNeedsPermission.value = false
+
+  // 后端那份：直接用地址，不需要任何授权
+  if (a.audioUrl) {
     if (audioObjectUrl.value.startsWith('blob:')) URL.revokeObjectURL(audioObjectUrl.value)
-    audioObjectUrl.value = article.value.audioUrl
+    audioObjectUrl.value = a.audioUrl
     return
   }
-  const file = await getArticleAudioFile(article.value.id)
+
+  /**
+   * 没有 audioUrl 的都是老数据（IndexedDB blob 或文件句柄）。
+   * 读到之后**顺手搬到后端**并写回 audioUrl —— 一次性的，
+   * 搬完这篇以后就走上面那条路，不用再管授权、也不怕源文件被删。
+   * 句柄那种读不到就只能等用户点一次「重新授权」，那一下有手势才能要到权限。
+   */
+  const r = await getArticleAudio(a.id, interactive)
   if (audioObjectUrl.value.startsWith('blob:')) URL.revokeObjectURL(audioObjectUrl.value)
-  audioObjectUrl.value = file ? URL.createObjectURL(file) : ''
+
+  if (r.kind === 'ok') {
+    const url = await uploadArticleAudio(r.file, a.audioFileName || r.file.name)
+    if (url) {
+      await readerStore.saveArticle({ ...a, audioUrl: url })
+      await clearArticleAudio(a.id)   // 后端已经有了，本地这份不用再占地方
+      audioObjectUrl.value = url
+      return
+    }
+    audioObjectUrl.value = URL.createObjectURL(r.file)
+    return
+  }
+
+  audioObjectUrl.value = ''
+  audioNeedsPermission.value = r.kind === 'need-permission'
 }
+
+/**
+ * 用户点按钮触发 —— 带着手势去要权限，这时 requestPermission 才允许调用。
+ * 要到之后立刻把文件内容转存进库里，这样只需要授权这最后一次。
+ */
+/**
+ * 老数据里存的是文件句柄，要读它得先要权限，而**要权限必须有用户手势**。
+ *
+ * 不为这件事单独做一个按钮：那是个只会用到一次的东西，用完就成了界面上的垃圾。
+ * 改成搭车 —— 用户点开「音频 / 视频」这个面板本身就是一次点击，
+ * 在这个时机去要权限是合法的。要到之后立刻搬进 resources/media/，
+ * 从此这篇再也不走句柄那条路，也就不会再触发第二次。
+ */
+watch(viewSubMode, async m => {
+  if (m !== 'audioAlign') return
+  if (!audioNeedsPermission.value) return
+  await loadArticleAudio(true)
+})
 
 const videoBusy = ref(false)
 const videoProgress = ref('')
@@ -3676,8 +3780,14 @@ async function handleVideoFile(f: File | null | undefined) {
     const r = await extractAudioFromVideo(f, (stage, ratio) => {
       videoProgress.value = `${stage} ${Math.round(ratio * 100)}%`
     })
-    await saveArticleAudioBlob(article.value.id, r.blob, r.fileName)
-    await readerStore.saveArticle({ ...article.value, audioFileName: r.fileName })
+    // 抽出来的音轨也走后端，跟「选择音频」同一个去处
+    const upUrl = await uploadArticleAudio(r.blob, r.fileName)
+    if (upUrl) {
+      await readerStore.saveArticle({ ...article.value, audioFileName: r.fileName, audioUrl: upUrl })
+    } else {
+      await saveArticleAudioBlob(article.value.id, r.blob, r.fileName)
+      await readerStore.saveArticle({ ...article.value, audioFileName: r.fileName })
+    }
     await loadArticleAudio()
     alignCursor.value = 0
     const mb = r.blob.size / 1048576
@@ -4044,9 +4154,24 @@ async function doPickAudio() {
   }
   alignLoading.value = true
   try {
-    const r = await pickArticleAudio(article.value.id)
-    if (r) {
-      await readerStore.saveArticle({ ...article.value, audioFileName: r.name })
+    /**
+     * 选完直接把文件交给后端存下来，文章上只留一个 audioUrl。
+     *
+     * 原来存的是文件句柄 —— 指向你磁盘上那个文件，权限活不过重启、
+     * 原文件一删就废。现在文件进了 data/media/，跟文章数据放在一起，
+     * 源文件删掉也照样能播，也不用再授权。
+     */
+    const picked = await pickArticleAudioFile()
+    if (picked) {
+      const url = await uploadArticleAudio(picked, picked.name)
+      if (url) {
+        await readerStore.saveArticle({ ...article.value, audioFileName: picked.name, audioUrl: url })
+      } else {
+        // 后端没起来时退回旧办法，至少这次会话能用
+        await saveArticleAudioBlob(article.value.id, picked, picked.name)
+        await readerStore.saveArticle({ ...article.value, audioFileName: picked.name, audioUrl: undefined })
+        alignMessage.value = '后端没响应，音频暂存在本地库里'
+      }
       await loadArticleAudio()
       alignCursor.value = 0
     }
@@ -4096,6 +4221,11 @@ const alignedCount = computed(() => article.value?.sentences.filter(s => s.audio
 let shadowStopTimer: ReturnType<typeof setTimeout> | null = null
 function playSentenceSmart(i: number) {
   const s = article.value?.sentences[i]
+  // 选了「我的录音」或「原声 → 我的」就交给 playBoth/playMine，它们已经处理好了顺序
+  if (hasRec.value[i]) {
+    if (playSource.value === 'mine') { void playMine(i); return }
+    if (playSource.value === 'both') { void playBoth(i); return }
+  }
   if (s?.audioStart != null && s.audioEnd != null && audioEl.value) {
     if (shadowStopTimer) clearTimeout(shadowStopTimer)
     audioEl.value.currentTime = s.audioStart
@@ -4217,6 +4347,10 @@ async function fitReciteBox(i: number) {
   fitBox(row?.querySelector('.recite-inline') as HTMLTextAreaElement | null)
 }
 
+/*
+ * 复述行底下原本印着一句 `原文：xxx`，后来改成「看原文」按钮 —— 两版都是多余的：
+ * 想看原文，用顶上那个中/英切换开关就行，不需要在每句底下再来一套。
+ */
 function toggleRecite(i: number) {
   const open = !reciteOpen.value[i]
   reciteOpen.value = { ...reciteOpen.value, [i]: open }
@@ -4550,25 +4684,11 @@ function gotoSentence(i: number) {
 }
 
 /** 把这篇所有录音连起来听一遍 */
-async function playAllRecordings() {
-  const a = article.value
-  if (!a) return
-  const idxs = Object.keys(hasRec.value).map(Number).filter(i => hasRec.value[i]).sort((x, y) => x - y)
-  if (!idxs.length) { subMessage.value = '还没有录音'; return }
-
-  subMessage.value = '正在拼接录音…'
-  const { concatRecordings } = await import('@/shared/core/voiceRecorder')
-  const blob = await concatRecordings(a.id, idxs, 0.25, (d, t) => {
-    subMessage.value = `正在拼接录音 ${d}/${t}`
-  })
-  if (!blob) { subMessage.value = '拼接失败'; return }
-
-  const url = URL.createObjectURL(blob)
-  const el = new Audio(url)
-  el.onended = () => URL.revokeObjectURL(url)
-  el.play().catch(() => URL.revokeObjectURL(url))
-  subMessage.value = `连起来播放 ${idxs.length} 句录音`
-}
+/*
+ * 这里原来有 playAllRecordings：把整篇录音拼成一条 blob 播一遍。
+ * 现在「只听自己录的」= 播放源选「我的录音」+ 循环方式选「本篇循环」，
+ * 速度、停顿、单句循环这些也都能用上，不需要单独一个连听按钮。
+ */
 
 /**
  * 告诉查词弹窗：在这个页面收藏单词时顺带划一道线。
@@ -6146,13 +6266,21 @@ async function runMfaAutoAlign() {
   if (!article.value) return
   mfaAligning.value = true
   try {
-    let file = await getArticleAudioFile(article.value.id)
+    let file = await currentAudioFile()
     if (!file) {
-      const picked = await pickArticleAudio(article.value.id)
+      // 还没关联音频，就地让用户选一个，顺手存好
+      const picked = await pickArticleAudioFile()
       if (!picked) { mfaAligning.value = false; return }
-      file = await getArticleAudioFile(article.value.id)
+      const url = await uploadArticleAudio(picked, picked.name)
+      await readerStore.saveArticle({
+        ...article.value,
+        audioFileName: picked.name,
+        audioUrl: url || undefined
+      })
+      if (!url) await saveArticleAudioBlob(article.value.id, picked, picked.name)
+      file = picked
     }
-    if (!file) throw new Error('没能读取到本地关联的音频文件')
+    if (!file) throw new Error('没能读取到关联的音频文件')
     const uploaded = await be.beUploadAudio(article.value.id, file)
     if (!uploaded) throw new Error('上传音频到后端失败——确认后端启动了（backend/README.md 有步骤），且装好了 MFA/ffmpeg')
     const result = await be.beAlignAudio(article.value.id)
@@ -7277,9 +7405,6 @@ watch(
     border-color: var(--r-accent, #8a4b3a);
     background: var(--r-paper, #fff);
   }
-}
-.recite-answer {
-  margin: 5px 0 0; font-size: 12.5px; color: var(--r-ink2, #9aa0a6);
 }
 
 .shadow-zh {

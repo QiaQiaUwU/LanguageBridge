@@ -41,8 +41,8 @@ try {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
   dataStore = createDataStore(APP_DIR, RESOURCES_DIR)
   dataApi = api.handleDataApi
-  // exe 版本的音轨也存在 exe 旁边的 data/media/
-  if (typeof api.setMediaRoot === 'function') api.setMediaRoot(APP_DIR)
+  // exe 版本的音频存在 exe 旁边的 resources/media/，跟源码版一致
+  if (typeof api.setMediaRoot === 'function') api.setMediaRoot(APP_DIR, RESOURCES_DIR)
 } catch (e) {
   // 没有这两个模块时退化成纯静态服务（跟以前一样），但要说清楚，
   // 不能让用户对着一个查不到词的界面猜是哪里坏了

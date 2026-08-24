@@ -5,6 +5,7 @@
     <main class="study-body">
       <p v-if="isWrongRound" class="wrong-round-tip">错词重练 · 这一轮里打错过的词，全部答对才进下一阶段</p>
 
+
       <!-- 上次没练完：问一句接着练还是重开 -->
       <div v-if="pendingSnapshot" class="resume-mask">
         <div class="resume-card">
@@ -36,20 +37,76 @@
         @skip="onSkip"
       />
 
-      <div v-if="scenarioPrompt.length" class="scen-mask">
-        <div class="scen-card">
-          <p class="scen-title">刚学了 {{ scenarioPrompt.length }} 个词</p>
-          <p class="scen-sub">用这批词过一段场景对话，比接着往下背记得牢。</p>
-          <div class="scen-words">
-            <span v-for="w in scenarioPrompt.slice(0, 12)" :key="w.id">{{ w.word }}</span>
-            <span v-if="scenarioPrompt.length > 12">…</span>
+      <!-- 教材在后台写：一条不挡路的横幅，自己会消失，也能点掉。
+           全屏遮罩挡在这儿等于把人钉住什么都干不了。 -->
+      <div v-if="syllabusNotice" class="sy-bar">
+        <span>教材在后台准备中，进度看右下角。这一轮先按原顺序学，课文写好后会插进来。</span>
+        <button class="sy-x" @click="syllabusNotice = false">×</button>
+      </div>
+
+      <!-- 教材里的一段。学完这一段的词才放出来，不跳页，读完接着背 -->
+      <div v-if="pendingLesson" class="scen-mask">
+        <div class="scen-card wide">
+          <p class="scen-title">{{ pendingLesson.topic }}</p>
+          <p class="scen-sub">
+            {{ sectionLoading ? '正在写这一段…' : sectionError ? sectionError : '这一段用的都是你刚学完的词' }}
+          </p>
+
+          <div v-if="sectionLines.length" class="sec-body">
+            <div v-for="(ln, i) in sectionLines" :key="i" class="sec-line">
+              <p class="sec-en">
+                <!-- 鼠标停在词上就出释义，跟阅读助手一个做法 -->
+                <span
+                  v-for="(tk, ti) in ln.tokens"
+                  :key="ti"
+                  :class="tk.isWord ? 'sec-tk' : ''"
+                  @mouseenter="tk.isWord && hoverLookup(tk.text, $event)"
+                  @mouseleave="cancelHoverLookup"
+                >{{ tk.text }}</span>
+              </p>
+              <p v-if="ln.zh" class="sec-zh">{{ ln.zh }}</p>
+            </div>
           </div>
+
           <div class="scen-acts">
-            <button class="dark-btn" @click="goScenario">去场景学习</button>
-            <button class="ghost-btn" @click="skipScenario">接着背</button>
+            <button v-if="sectionError" class="ghost-btn" @click="loadSection">重试</button>
+            <button class="dark-btn" :disabled="sectionLoading" @click="finishSection">
+              {{ podcastJustDone ? '读完了，看整篇' : '读完了，接着背' }}
+            </button>
+            <button class="ghost-btn" @click="skipScenario">跳过</button>
           </div>
         </div>
       </div>
+
+      <!-- 一篇稿子的所有段都读完了：拼成整篇给你看一次，可以存进阅读助手 -->
+      <div v-if="fullPodcast" class="scen-mask">
+        <div class="scen-card wide">
+          <p class="scen-title">{{ fullPodcast.title }}</p>
+          <p class="scen-sub">这一篇的几段都读完了，这是完整的一篇</p>
+          <div class="sec-body tall">
+            <div v-for="(ln, i) in fullLines" :key="i" class="sec-line">
+              <p class="sec-en">
+                <span
+                  v-for="(tk, ti) in ln.tokens"
+                  :key="ti"
+                  :class="tk.isWord ? 'sec-tk' : ''"
+                  @mouseenter="tk.isWord && hoverLookup(tk.text, $event)"
+                  @mouseleave="cancelHoverLookup"
+                >{{ tk.text }}</span>
+              </p>
+              <p v-if="ln.zh" class="sec-zh">{{ ln.zh }}</p>
+            </div>
+          </div>
+          <div class="scen-acts">
+            <button class="dark-btn" :disabled="savingPodcast" @click="savePodcastToReading">
+              {{ savingPodcast ? '保存中…' : '存进阅读助手' }}
+            </button>
+            <button class="ghost-btn" @click="closeFullPodcast">接着背</button>
+          </div>
+        </div>
+      </div>
+
+      <WordLookupPopover />
 
       <div v-if="finished" class="settle">
         <h2>本轮完成</h2>
@@ -200,7 +257,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import TypingCard from './components/TypingCard.vue'
 import { useWordStore } from '@/shared/stores/wordStore'
-import { playWord } from '@/shared/core/audio'
+import { playWord, prefetchWord } from '@/shared/core/audio'
 import type { WordItem } from '@/shared/types/WordItem'
 import {
   getStudySettings, saveStudySettings, MODE_STAGES, STAGE_NAMES, typeOfStage, isReviewStage,
@@ -213,6 +270,14 @@ import { loadFsrsData, applyGrade, getGradeByWrongTimes, flushFsrsData, forgetWo
 import { loadMasteredWords, getIgnoreSet, addMastered, getMasteredSet } from '@/shared/core/masteredWords'
 import { recordReview, recordWordsLearned, getWeekActivity } from '@/shared/core/activityLog'
 import { saveSnapshot, readSnapshot, clearSnapshot, snapshotUsable, type PracticeSnapshot } from '@/shared/core/practiceSnapshot'
+import { ensureSyllabus } from '@/shared/core/syllabusTask'
+import {
+  readSyllabus, buildSyllabus, generateAllSections, saveSyllabus, applyOrder, lessonReadyFor,
+  generateSection, podcastOfLesson, podcastComplete, podcastSentences,
+  type Syllabus, type SyllabusLesson, type SyllabusPodcast
+} from '@/shared/core/syllabus'
+import { openWordLookup, splitEnglishText } from '@/shared/core/wordLookup'
+import WordLookupPopover from '@/apps/word-core/components/WordLookupPopover.vue'
 import { startStudyClock, stopStudyClock } from '@/shared/core/studyClock'
 
 const router = useRouter()
@@ -220,7 +285,11 @@ const route = useRoute()
 const wordStore = useWordStore()
 const settings = getStudySettings()
 
-const GROUP_SIZE = 7
+/**
+ * 一组几个词。默认 7，跟上游 TypeWords 的 `const groupSize = 7` 一致；
+ * 现在从设置里读，可以改。
+ */
+const GROUP_SIZE = Math.max(2, settings.groupSize || 7)
 
 const groupId = computed(() => (route.query.group as string) || '')
 const scopeLabel = ref('')
@@ -279,6 +348,14 @@ const totalWrong = computed(() =>
 
 const prevWordText = computed(() => currentList.value[index.value - 1]?.word || '')
 const nextWordText = computed(() => currentList.value[index.value + 1]?.word || '')
+
+/**
+ * 提前把下一个词的发音抓下来。
+ *
+ * 发音是网络请求，轮到那个词才去取就要等一下。这里在当前词还在打的时候
+ * 就先取好，切过去时是本地的，按下去立刻响。
+ */
+watch(nextWordText, w => { if (w) prefetchWord(w, getStudySettings().soundType) })
 
 const currentWord = computed<WordItem | null>(() => currentList.value[index.value] || null)
 
@@ -349,7 +426,45 @@ async function init() {
     group = { id: '', name: scope.label || '', ...p } as any
   }
 
+  /**
+   * 配套教材。
+   *
+   * 勾了场景学习（scenarioEvery > 0）才有这一步 —— 它要花额度，没勾就完全不碰。
+   * 已经有教材就直接用它的顺序；没有就后台跑一次，**不挡着学习**：
+   * 这一轮照原顺序学，教材建好了下一轮生效。
+   */
+  /**
+   * 配套教材。
+   *
+   * 勾了场景学习（scenarioEvery > 0）才有这一步，没勾完全不碰。
+   *
+   * **整段不 await。** 之前在这儿等教材写完 —— 结果 buildTodayTask 迟迟不执行，
+   * taskNew 是空的，页面上「总词数 0」，就算把提示框关掉底下也没词可学，
+   * 看着就是被钉在那个窗口上。教材是给下一段课文和学习顺序用的，
+   * 它没好不该拦着人背单词。
+   *
+   * 已经有教材就同步取出来用（读 localStorage，不耗时），
+   * 需要写的部分丢进任务中心慢慢跑，写好的段学到那儿自然会弹。
+   */
+  if (settings.scenarioEvery > 0) {
+    // 教材按 scopeKey 存：不同标签组合是不同的一套，同一组合再来直接命中
+    const sy = readSyllabus(scopeKey.value)
+    if (sy) {
+      syllabus.value = sy
+      const missing = sy.lessons.filter(l => !l.sentences?.length).length
+      if (missing) {
+        syllabusNotice.value = true
+        void ensureSyllabus(scopeKey.value, words, scope.label).then(x => { if (x) syllabus.value = x })
+      }
+    } else if (words.length) {
+      syllabusNotice.value = true
+      void ensureSyllabus(scopeKey.value, words, scope.label).then(x => { if (x) syllabus.value = x })
+    }
+  }
+
   const task = buildTodayTask({ words, group, ignoreSet: getIgnoreSet(settings.ignoreSimpleWord) })
+  // 有教材就按它排：同一话题的词挨在一起学，之后才凑得出一篇像样的课文
+  if (syllabus.value) task.newWords = applyOrder(task.newWords, syllabus.value.order)
   taskNew.value = task.newWords
   taskReview.value = task.reviewWords
   newCount.value = task.newWords.length
@@ -374,13 +489,23 @@ async function init() {
 
 /* ---------- 断点续练 ---------- */
 
-const scopeKey = computed(() => {
+/**
+ * 这一轮练的是哪一批词。
+ *
+ * **必须在进页面时就固定下来，不能做成 computed。**
+ * computed 读的是 route.query，而存断点是在 onUnmounted 里做的 ——
+ * 那时候路由已经切到下一个页面了，query 变成新页面的，
+ * 于是断点被存到一个错误的 key 下，下次回来怎么也对不上，
+ * 看着就像"根本没保存进度"。
+ */
+function computeScopeKey(): string {
   const scope = readScope(route.query as Record<string, any>)
   if (scope.kind === 'group' && scope.groupId) return `group:${scope.groupId}`
   if (scope.kind === 'tag' && scope.tag) return scopeKeyOfTag(scope.tag)
   if (scope.kind === 'adhoc') return `adhoc:${scope.label || ''}`
   return 'all'
-})
+}
+const scopeKey = ref(computeScopeKey())
 
 const pendingSnapshot = ref<PracticeSnapshot | null>(null)
 
@@ -593,8 +718,30 @@ function onComplete() {
   curWrong.value = 0
 
   if (settings.scenarioEvery > 0 && isNewWordStage.value) {
+    /**
+     * 什么时候插场景学习。
+     *
+     * 原来是"每学满 N 个新词"就抓最近 N 个凑一堆 —— 那批词话题上毫无关系，
+     * 硬要写成一篇短文只能写得很勉强。
+     * 现在看教材：某一课覆盖的词全学完了才把那一课端出来，
+     * 一课的词本来就是按话题归到一起的。
+     * 没有教材（没勾或还没建好）就退回原来的按数量触发，不至于什么都不给。
+     */
     learnedSinceScenario.value++
-    if (learnedSinceScenario.value >= settings.scenarioEvery) {
+    const sy = syllabus.value
+    if (sy) {
+      const learned = new Set(recentWords.value.map(w => w.word.toLowerCase()))
+      const lesson = lessonReadyFor(sy, learned)
+      if (lesson) {
+        pendingLesson.value = lesson
+        scenarioPrompt.value = wordStore.words.filter(w =>
+          lesson.words.some(x => x.toLowerCase() === w.word.toLowerCase())
+        )
+        learnedSinceScenario.value = 0
+        void loadSection()
+        return
+      }
+    } else if (learnedSinceScenario.value >= settings.scenarioEvery) {
       learnedSinceScenario.value = 0
       scenarioPrompt.value = recentWords.value.slice(-settings.scenarioEvery)
       return
@@ -608,17 +755,173 @@ const isNewWordStage = computed(() =>
   stage.value === 'listenNew' || stage.value === 'dictationNew'
 )
 const learnedSinceScenario = ref(0)
-const scenarioPrompt = ref<WordItem[]>([])
-const recentWords = ref<WordItem[]>([])
+const syllabus = ref<Syllabus | null>(null)
 
-function goScenario() {
-  const words = scenarioPrompt.value
-  scenarioPrompt.value = []
-  wordStore.setStudyList(words)
-  router.push('/scenario')
+/**
+ * 这两个是上一轮删旧函数时被正则误删的声明。
+ *
+ * 模板里 `v-if="scenarioPrompt.length"` 和 `v-if="pendingLesson"` 还在用，
+ * 声明没了就成了 undefined.length —— 整个学习页渲染直接抛 TypeError 白屏。
+ * 教训：用正则删代码块时，删完必须把模板引用过一遍，
+ * 光看"括号平衡、模板结构通过"是查不出这种的。
+ */
+/** 这次要弹的是教材里的哪一课；按数量触发时是 null */
+const pendingLesson = ref<SyllabusLesson | null>(null)
+/** 这一批词是要拿去做场景学习的 */
+const scenarioPrompt = ref<WordItem[]>([])
+/** 教材开始写时提示一次，让人知道右下角在跑什么 */
+const syllabusNotice = ref(false)
+
+/* ---------- 教材段落的呈现 ---------- */
+
+const sectionLoading = ref(false)
+const sectionError = ref('')
+const savingPodcast = ref(false)
+const fullPodcast = ref<SyllabusPodcast | null>(null)
+/** 这一段是不是本篇的最后一段：是的话按钮写「看整篇」，让人知道读完还有东西 */
+const podcastJustDone = computed(() => {
+  const sy = syllabus.value
+  const l = pendingLesson.value
+  if (!sy || !l) return false
+  const pod = podcastOfLesson(sy, l.id)
+  if (!pod) return false
+  return pod.lessonIds[pod.lessonIds.length - 1] === l.id
+})
+
+interface SecTok { text: string; isWord: boolean }
+interface SecLine { en: string; zh: string; tokens: SecTok[] }
+
+function toLines(pairs: { en: string; zh: string }[]): SecLine[] {
+  return pairs.map(p => ({ ...p, tokens: splitEnglishText(p.en) }))
 }
+
+const sectionLines = ref<SecLine[]>([])
+const fullLines = ref<SecLine[]>([])
+
+/**
+ * 取这一段的正文。已经写过就直接用，没写过才调 AI。
+ * 写好立刻存进教材 —— 中途退出、下次再来不用重写一遍，那是花过钱的东西。
+ */
+async function loadSection() {
+  const sy = syllabus.value
+  const lesson = pendingLesson.value
+  if (!sy || !lesson) return
+
+  if (lesson.sentences?.length) {
+    sectionLines.value = toLines(lesson.sentences)
+    return
+  }
+
+  sectionLoading.value = true
+  sectionError.value = ''
+  try {
+    const pod = podcastOfLesson(sy, lesson.id)
+    const idx = pod ? pod.lessonIds.indexOf(lesson.id) : 0
+    const prev: { en: string; zh: string }[] = []
+    if (pod) {
+      for (const id of pod.lessonIds.slice(0, idx)) {
+        const l = sy.lessons.find(x => x.id === id)
+        if (l?.sentences?.length) prev.push(...l.sentences)
+      }
+    }
+    const pairs = await generateSection(sy, lesson, {
+      isFirst: idx === 0,
+      isLast: !!pod && idx === pod.lessonIds.length - 1,
+      prev
+    })
+    lesson.sentences = pairs
+    saveSyllabus(sy)
+    sectionLines.value = toLines(pairs)
+  } catch (e) {
+    sectionError.value = '这一段没写出来：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    sectionLoading.value = false
+  }
+}
+
+/** 读完这一段。整篇的段都读完了就把完整版端出来 */
+function finishSection() {
+  const sy = syllabus.value
+  const lesson = pendingLesson.value
+  if (!sy || !lesson) { skipScenario(); return }
+
+  lesson.read = true
+  saveSyllabus(sy)
+
+  const pod = podcastOfLesson(sy, lesson.id)
+  pendingLesson.value = null
+  sectionLines.value = []
+  scenarioPrompt.value = []
+
+  if (pod && podcastComplete(sy, pod)) {
+    fullPodcast.value = pod
+    fullLines.value = toLines(podcastSentences(sy, pod))
+    return          // 看完整篇再 advance
+  }
+  advance()
+}
+
+function closeFullPodcast() {
+  fullPodcast.value = null
+  fullLines.value = []
+  advance()
+}
+
+/** 存进阅读助手：从此它就是一篇普通文章，能对轴、能跟读、能划线 */
+async function savePodcastToReading() {
+  const sy = syllabus.value
+  const pod = fullPodcast.value
+  if (!sy || !pod) return
+  savingPodcast.value = true
+  try {
+    const { useReaderStore } = await import('@/apps/reading-assistant/stores/readerStore')
+    const rs = useReaderStore()
+    const now = new Date().toISOString()
+    const id = `art-lesson-${Date.now().toString(36)}`
+    await rs.saveArticle({
+      id,
+      title: pod.title || '配套课文',
+      sentences: podcastSentences(sy, pod),
+      notes: '',
+      source: 'scenario-podcast',
+      createdAt: now,
+      updatedAt: now
+    } as any)
+    pod.articleId = id
+    saveSyllabus(sy)
+    closeFullPodcast()
+  } catch (e) {
+    sectionError.value = '存不进去：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    savingPodcast.value = false
+  }
+}
+
+/* 悬停查词。跟阅读助手同一套 openWordLookup，延迟一点再弹，免得划过去就闪 */
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+function hoverLookup(raw: string, e: MouseEvent) {
+  cancelHoverLookup()
+  const el = e.target as HTMLElement
+  hoverTimer = setTimeout(() => {
+    hoverTimer = null
+    openWordLookup(raw, el, async candidates => {
+      for (const c of candidates) {
+        const hit = wordStore.words.find(w => w.word.toLowerCase() === c.toLowerCase())
+        if (hit) return hit
+      }
+      return null
+    })
+  }, 260)
+}
+function cancelHoverLookup() {
+  if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null }
+}
+
 function skipScenario() {
   scenarioPrompt.value = []
+  pendingLesson.value = null
+  sectionLines.value = []
+  sectionError.value = ''
   advance()
 }
 
@@ -626,7 +929,10 @@ function advance() {
   const isLast = index.value >= currentList.value.length - 1
 
   if (!isLast) {
-    if (stage.value === 'followWriteNew' || stage.value === 'followWriteReview' || isWrongRound.value) {
+    // 错词重练那一轮不分组：那个列表通常只有几个词，
+    // 按 7 个一组去切，index % GROUP_SIZE 基本不会成立，等于白绕一圈
+    if (!isWrongRound.value &&
+        (stage.value === 'followWriteNew' || stage.value === 'followWriteReview')) {
       groupLoop()
     } else {
       index.value++
@@ -727,12 +1033,20 @@ async function complete() {
       const hit = byWord.get(key)
       if (!hit || mastered.has(key)) continue
       const n = Number(times)
-      await wordStore.setWordStatus(
-        hit.id,
-        n <= settings.statusKnownLimit ? 'known'
-          : n <= settings.statusFuzzyLimit ? 'fuzzy'
-            : 'unknown'
-      )
+      const st = n <= settings.statusKnownLimit ? 'known'
+        : n <= settings.statusFuzzyLimit ? 'fuzzy'
+          : 'unknown'
+      await wordStore.setWordStatus(hit.id, st)
+
+      /**
+       * 判成「认识」的词顺手放进已掌握词表。
+       *
+       * 这是一道**粗筛**：只说明这一轮没打错，不等于真记牢了。
+       * 所以已掌握那一页留着「移出」——进去翻一遍，把其实还不熟的挑出来，
+       * 移出之后立刻重新参与排课。
+       * 不想要这道粗筛就在设置里关掉 autoMasterKnown。
+       */
+      if (st === 'known' && settings.autoMasterKnown) addMastered(key)
     }
   }
 
@@ -1078,4 +1392,30 @@ onUnmounted(() => {
 .resume-card h3 { margin: 0 0 8px; font-size: 17px; }
 .resume-sub { font-size: 13.5px; color: var(--r-ink2, #6b7280); line-height: 1.7; margin: 0; }
 .resume-acts { display: flex; gap: 10px; justify-content: center; margin: 16px 0 10px; }
+
+/* 教材段落面板 */
+.scen-card.wide { max-width: 660px; width: min(660px, 92vw); text-align: left; }
+.sec-body {
+  max-height: 46vh; overflow: auto; margin: 14px 0 4px;
+  padding-right: 6px;
+}
+.sec-body.tall { max-height: 56vh; }
+.sec-line { margin-bottom: 12px; }
+.sec-en { margin: 0; font-size: 15.5px; line-height: 1.75; color: var(--r-ink, #1f2328); }
+.sec-zh { margin: 2px 0 0; font-size: 13.5px; line-height: 1.7; color: var(--r-ink2, #8a9099); }
+.sec-tk { cursor: help; border-radius: 3px; }
+.sec-tk:hover { background: var(--r-ui, #eef1f4); }
+
+/* 教材准备中的横幅：贴在顶部，不挡内容 */
+.sy-bar {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 auto 10px; padding: 7px 14px;
+  max-width: 720px; border-radius: 999px;
+  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #6b7280);
+  font-size: 12.5px; line-height: 1.6;
+}
+.sy-x {
+  margin-left: auto; border: none; background: none; cursor: pointer;
+  color: var(--r-ink2, #9aa0a6); font-size: 15px; line-height: 1;
+}
 </style>

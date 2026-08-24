@@ -123,12 +123,45 @@ function nowIso() {
  * 交给调用方（server.mjs）继续走静态文件那套逻辑。
  */
 let MEDIA_ROOT = ''
-/** 由 server 在启动时告诉这个模块音频存哪。没设过就退回进程当前目录。 */
-export function setMediaRoot(dir) { MEDIA_ROOT = dir }
+let MEDIA_DIR = ''
+/**
+ * 由 server 在启动时告诉这个模块音频存哪。
+ *
+ * 音频放 resources/media/ —— 跟 articles/、word_explanations/ 同级。
+ * 理由跟文章放 resources/ 是同一个：这是**学习材料**，体积大、要能用
+ * 文件管理器直接翻、要跟着资源目录一起备份和拷机器。
+ * data/ 留给应用状态（词条、分组、记忆卡片、设置）。
+ *
+ * 老版本落在 data/media/，启动时搬过来一次，见 migrateLegacyMedia。
+ */
+export function setMediaRoot(rootDir, resourcesDir) {
+  MEDIA_ROOT = rootDir
+  MEDIA_DIR = join(resourcesDir || join(rootDir, 'resources'), 'media')
+  migrateLegacyMedia(join(rootDir, 'data', 'media'), MEDIA_DIR)
+}
+
 function mediaDir() {
-  const d = join(MEDIA_ROOT || process.cwd(), 'data', 'media')
+  const d = MEDIA_DIR || join(MEDIA_ROOT || process.cwd(), 'resources', 'media')
   if (!existsSync(d)) mkdirSync(d, { recursive: true })
   return d
+}
+
+/** 把旧的 data/media/ 里的音频搬到 resources/media/。只搬一次，同名不覆盖。 */
+function migrateLegacyMedia(from, to) {
+  try {
+    if (!existsSync(from)) return
+    if (!existsSync(to)) mkdirSync(to, { recursive: true })
+    let moved = 0
+    for (const name of readdirSync(from)) {
+      const src = join(from, name)
+      const dst = join(to, name)
+      if (existsSync(dst)) continue
+      try { renameSync(src, dst); moved++ } catch { /* 跨盘之类的失败就跳过 */ }
+    }
+    if (moved) console.log(`音频已从 data/media/ 搬到 resources/media/（${moved} 个）`)
+  } catch (e) {
+    console.warn('搬迁旧音频目录失败，不影响使用：', e.message)
+  }
 }
 
 let ffmpegOk = null
@@ -298,7 +331,16 @@ export async function handleDataApi(req, res, store, urlPath) {
    * 这条不碰 ffmpeg，纯落盘。
    */
   if (req.method === 'POST' && urlPath === '/api/media/put-audio') {
-    const ext = 'wav'
+    /**
+     * 扩展名跟着上传的文件走。
+     *
+     * 原来写死 wav —— 传 mp3 进来也存成 .wav，文件名和内容对不上。
+     * 浏览器多半能靠内容嗅探播出来，但转写那条路是把路径直接交给
+     * whisper/ffmpeg 的，扩展名骗人就可能出岔子。
+     */
+    const rawExt = String(new URL(req.url, 'http://x').searchParams.get('ext') || 'wav')
+      .replace(/[^a-z0-9]/gi, '').toLowerCase()
+    const ext = ['mp3', 'wav', 'm4a', 'ogg', 'aac', 'flac', 'webm'].includes(rawExt) ? rawExt : 'wav'
     const outName = `audio-${Date.now().toString(36)}.${ext}`
     const out = join(mediaDir(), outName)
     try {
@@ -551,6 +593,31 @@ export async function handleDataApi(req, res, store, urlPath) {
         if (Array.isArray(u.word_family) && u.word_family.length &&
             !(Array.isArray(doc.word_family) && doc.word_family.length)) {
           doc.word_family = u.word_family
+          touched = true
+        }
+
+        /**
+         * 释义、音标、例句也要写回来。
+         *
+         * 这三项之前根本没进这个接口 —— 补全把它们写进了 data/words.json，
+         * 可 resources/word_explanations/ 才是原始资料的准；
+         * 重建缓存、换台机器、甚至下次启动重扫，都会拿释义库那份覆盖回去。
+         * 表现出来就是「跑完一千七百多个，刷新一下数字一点没变」。
+         *
+         * 同样守"已有值不覆盖"的规矩：只填空的。
+         */
+        if (u.phonetic && !doc.phonetic) {
+          doc.phonetic = u.phonetic
+          touched = true
+        }
+        if (Array.isArray(u.pos_definitions) && u.pos_definitions.length &&
+            !(Array.isArray(doc.pos_definitions) && doc.pos_definitions.length)) {
+          doc.pos_definitions = u.pos_definitions
+          touched = true
+        }
+        if (Array.isArray(u.example_sentences) && u.example_sentences.length &&
+            !(Array.isArray(doc.example_sentences) && doc.example_sentences.length)) {
+          doc.example_sentences = u.example_sentences
           touched = true
         }
         if (touched) {

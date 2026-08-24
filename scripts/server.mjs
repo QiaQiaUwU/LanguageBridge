@@ -69,8 +69,9 @@ const VENDOR_DATA_DIR = RESOURCES_DIR
 // 这是修复"文章和笔记丢失"问题的核心：以前数据只活在浏览器 IndexedDB 里，backend/
 // 需要手动启动，实际使用中几乎从没真正跑起来过，双写的另一半一直在往空气里写。
 const dataStore = createDataStore(ROOT, RESOURCES_DIR)
-// 抽出来的音轨存 <项目>/data/media/
-setMediaRoot(ROOT)
+// 音频存 <项目>/resources/media/，跟文章、词库释义放在一起。
+// 老版本落在 data/media/，setMediaRoot 里会自动搬过来。
+setMediaRoot(ROOT, RESOURCES_DIR)
 
 const PORT_FILE = join(ROOT, 'port.txt')
 const DEFAULT_PORT = 58712

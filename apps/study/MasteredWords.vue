@@ -17,7 +17,7 @@
     </div>
 
     <p v-if="!list.length" class="empty">
-      还没有已掌握的词。学习时在自测阶段按 <kbd>3</kbd>，或在词条详情里标记，词就会进到这里。
+      还没有已掌握的词。练完判成「认识」的会自动进来，也可以在学习时按 <kbd>3</kbd> 或在词条详情里手动标记。
     </p>
 
     <ul v-else class="word-list">

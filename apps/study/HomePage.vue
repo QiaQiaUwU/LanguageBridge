@@ -57,8 +57,18 @@
             <div class="task-num"><span class="n review">{{ overview.reviewCount }}</span><span class="l">复习</span></div>
           </div>
           <div class="task-btns">
-            <button class="start-btn" @click="startStudy">
-              {{ overview.learnedIndex > 0 ? '继续学习' : '开始学习' }} →
+            <!-- 没词可学就别让人点进去。
+                 点进去只会看到一个空页面，还得自己退出来猜哪儿出了问题；
+                 词表引用断了、今天的量学完了，都会走到这个状态。 -->
+            <!-- 没教材时这个按钮变成「生成教材」，点了就去建。
+                 上一版直接置灰是个死锁：没教材→按钮灰→点不动→永远没教材。 -->
+            <button
+              class="start-btn"
+              :disabled="!canStartStudy && !needSyllabus"
+              :title="startBlockReason"
+              @click="needSyllabus ? goMakeSyllabus() : startStudy()"
+            >
+              {{ startBtnText }} →
             </button>
             <button class="free-btn" @click="startReview">复习{{ dueCount ? ` ${dueCount}` : '' }}</button>
           </div>
@@ -80,6 +90,7 @@
         <button class="entry-card" @click="go('/mastered')">
           <span class="entry-name">已掌握</span>
           <span class="entry-num">{{ masteredCount }}</span>
+          <span class="entry-sub">认识 {{ knownCount }}</span>
         </button>
         <button class="entry-card" @click="go('/study-notes')">
           <span class="entry-name">学习记录</span>
@@ -87,6 +98,42 @@
         </button>
       </div>
     </section>
+
+    <div v-if="showSyllabus && syllabusInfo" class="sy-mask" @click.self="showSyllabus = false">
+      <div class="sy-card">
+        <div class="sy-head">
+          <h3>配套教材 · {{ scopeLabelText }}</h3>
+          <button class="icon-btn" @click="showSyllabus = false">×</button>
+        </div>
+        <p class="sy-sub">
+          {{ syllabusInfo.podcasts }} 篇 · {{ syllabusInfo.total }} 段 ·
+          已写好 {{ syllabusInfo.done }} 段
+          <span class="sy-key">存储键：{{ syllabusInfo.scopeKey }}</span>
+        </p>
+        <!-- 本机存过的所有教材。存储键算错时教材会落到别的 key 下，
+             看着像消失了其实还在 —— 列出来就能认领或清掉。 -->
+        <details v-if="otherSyllabuses.length" class="sy-others">
+          <summary>本机还有 {{ otherSyllabuses.length }} 套别的教材</summary>
+          <div v-for="o in otherSyllabuses" :key="o.key" class="sy-other">
+            <span class="sy-other-key">{{ o.key }}</span>
+            <span class="sy-other-n">{{ o.done }}/{{ o.total }} 段</span>
+            <button class="ghost-btn tiny" @click="adoptSyllabus(o.key)">用到当前词表</button>
+            <button class="ghost-btn tiny" @click="dropSyllabus(o.key)">删掉</button>
+          </div>
+        </details>
+
+        <ul class="sy-list">
+          <li v-for="(l, i) in syllabusInfo.lessons" :key="l.id" class="sy-item">
+            <span class="sy-no">{{ i + 1 }}</span>
+            <span class="sy-topic">{{ l.topic }}</span>
+            <span class="sy-words">{{ l.words.length }} 词</span>
+            <span class="sy-state" :class="{ ok: !!l.sentences?.length }">
+              {{ l.sentences?.length ? `${l.sentences.length} 句` : '未写' }}
+            </span>
+          </li>
+        </ul>
+      </div>
+    </div>
 
     <section class="grid-section">
       <h3 class="sec-title">我的词表</h3>
@@ -217,6 +264,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
+import { tasks } from '@/shared/core/taskCenter'
+import { readSyllabus, syllabusReady, listSyllabuses, saveSyllabus, clearSyllabus } from '@/shared/core/syllabus'
+import { ensureSyllabus } from '@/shared/core/syllabusTask'
+import { getStudySettings } from '@/shared/core/studySettings'
 import type { GraphNode, GraphLink } from '@/apps/word-core/components/WordGraph3D.vue'
 const WordGraph3D = defineAsyncComponent(
   () => import('@/apps/word-core/components/WordGraph3D.vue')
@@ -285,8 +336,15 @@ const showPicker = ref(false)
 const LIBRARY_BOOK_ID = 'book-lib-all'
 
 const allBooks = computed(() => wordStore.groups.filter(g => g.id.startsWith('book-') && !g.parentId))
+/**
+ * 「我的词表」。排除的只有词库那一条（book-lib-all）。
+ *
+ * 原来还有个 `wordIds.length < words.length` 的条件 —— 意思是"词数等于总数的
+ * 就当成词库本体"。这个判断太脆：导进来的词表要是正好覆盖了库里全部的词，
+ * 它就凭空消失了，人还以为导入失败。用 id 排除就够了。
+ */
 const myWordLists = computed(() =>
-  allBooks.value.filter(g => g.id !== LIBRARY_BOOK_ID && g.wordIds.length < wordStore.words.length)
+  allBooks.value.filter(g => g.id !== LIBRARY_BOOK_ID)
 )
 const studyGroup = computed(() => wordStore.groups.find(g => g.id === studyGroupId.value) || null)
 
@@ -332,6 +390,18 @@ const studyWords = computed(() =>
 
 const overview = ref({ newCount: 0, reviewCount: 0, learnedIndex: 0, total: 0, perDay: 20 })
 const masteredCount = ref(0)
+
+/**
+ * 「已掌握」和「认识」是两回事，这张卡片上把两个数都给出来。
+ *
+ * 已掌握（masteredWords）= 你**手动**点过卡片上那个按钮的词，从此不再安排。
+ * 认识（status === 'known'）= 练完自动标的，只是说这一轮没打错。
+ *
+ * 之前卡片只显示前者，于是学了几百个词它还是 0 —— 因为正常练习流程
+ * 根本不会往已掌握里加词，只有手动点才会。上游 TypeWords 也是这个设计，
+ * 但界面上不写清楚就会以为是统计坏了。
+ */
+const knownCount = computed(() => wordStore.words.filter(w => w.status === 'known').length)
 const masteredSet = ref<Set<string>>(new Set())
 
 function refreshOverview() {
@@ -449,6 +519,128 @@ function currentScope(): StudyScope {
   if (s.kind === 'tag') return { ...s, label: `${s.tag} · ${studyWords.value.length} 词` }
   return s
 }
+
+/**
+ * 教材还在生成时不给进学习。
+ *
+ * 这套东西的前提就是「先按教材排好学词顺序、学到某处插进一段课文」——
+ * 教材没好就进去，学的是原顺序、课文一段都弹不出来，这一轮等于白学。
+ * 所以入口直接锁住，按钮上写清楚在等什么，右下角有进度和停止。
+ */
+const syllabusRunning = computed(() =>
+  tasks.some(t => t.status === 'running' && String(t.id || '').startsWith('syllabus'))
+)
+
+/**
+ * 教材齐不齐。**门槛是"这套教材完整"，不是"有没有任务在跑"。**
+ *
+ * 只看任务的话，没跑任务、也没教材的时候照样能点进去 ——
+ * 那正是最该拦住的情况：学词顺序按教材排、课文按教材弹，
+ * 教材不全就进去，学的是半套东西。
+ *
+ * 没勾场景学习（scenarioEvery = 0）不受这条约束，那种模式本来就不需要教材。
+ */
+const syllabusOk = computed(() => {
+  progressTick.value                       // 换词表、任务跑完都要重算
+  const st = getStudySettings()
+  if (!st.scenarioEvery) return true
+  return syllabusReady(readSyllabus(currentScopeKey.value))
+})
+
+const canStartStudy = computed(() =>
+  !syllabusRunning.value &&
+  syllabusOk.value &&
+  (overview.value.newCount > 0 || overview.value.reviewCount > 0)
+)
+
+/** 缺教材、而且没有任务在跑 —— 这时按钮该是「生成教材」 */
+const needSyllabus = computed(() => !syllabusRunning.value && !syllabusOk.value)
+
+const startBtnText = computed(() => {
+  if (syllabusRunning.value) return '教材准备中…'
+  if (needSyllabus.value) return '生成配套教材'
+  return overview.value.learnedIndex > 0 ? '继续学习' : '开始学习'
+})
+
+/**
+ * 就地建教材，不跳页。
+ *
+ * 之前是跳到学习页、靠 query 传范围 —— 参数名写错一个（groupId 写成了
+ * readScope 认的 group），范围就从"当前词表 570 词"悄悄变成"全部词库 17366 词"，
+ * 分出来一百八十段。范围这种东西不该靠字符串在页面之间传。
+ * 主页手里本来就有 studyWords 和 scopeKey，直接用。
+ */
+async function goMakeSyllabus() {
+  await ensureSyllabus(currentScopeKey.value, studyWords.value, scopeLabelText.value)
+  progressTick.value++      // 建完刷新一下按钮状态
+}
+
+/** 教材存在哪个 key 下。跟学习页 computeScopeKey 是同一套规则 */
+const currentScopeKey = computed(() => {
+  const d = currentScopeDef.value
+  if (d.kind === 'group' && d.groupId) return `group:${d.groupId}`
+  if (d.kind === 'tag' && d.tag) return scopeKeyOfTag(d.tag)
+  return 'all'
+})
+
+const scopeLabelText = computed(() =>
+  studyGroup.value?.name || studyTag.value || '全部单词'
+)
+
+/** 除当前这套之外，本机还存着哪些教材 */
+const otherSyllabuses = computed(() => {
+  progressTick.value
+  return listSyllabuses()
+    .filter(x => x.key !== currentScopeKey.value)
+    .map(x => ({
+      key: x.key,
+      total: x.syllabus.lessons.length,
+      done: x.syllabus.lessons.filter(l => l.sentences?.length).length
+    }))
+})
+
+/** 把别的 key 下那套挪过来当当前词表的教材（早先存错键的可以这样认领回来） */
+function adoptSyllabus(key: string) {
+  const sy = readSyllabus(key)
+  if (!sy) return
+  if (!confirm(`把「${key}」那套教材挪到当前词表？当前这套会被替换。`)) return
+  saveSyllabus({ ...sy, groupId: currentScopeKey.value })
+  clearSyllabus(key)
+  progressTick.value++
+}
+
+function dropSyllabus(key: string) {
+  if (!confirm(`删掉「${key}」那套教材？写好的课文会一起没。`)) return
+  clearSyllabus(key)
+  progressTick.value++
+}
+
+/**
+ * 当前词表的教材概况。没有教材就是 null，按钮也就不出现。
+ * 「跑完了没有、跑的是不是这个词表」之前只能靠盯任务卡猜，
+ * 这里直接把段数和存储键摊开。
+ */
+const showSyllabus = ref(false)
+const syllabusInfo = computed(() => {
+  progressTick.value
+  const sy = readSyllabus(currentScopeKey.value)
+  if (!sy) return null
+  return {
+    total: sy.lessons.length,
+    done: sy.lessons.filter(l => l.sentences?.length).length,
+    podcasts: sy.podcasts.length,
+    lessons: sy.lessons,
+    scopeKey: sy.groupId
+  }
+})
+
+
+const startBlockReason = computed(() => {
+  if (syllabusRunning.value) return '教材正在生成，进度看右下角。生成完才能开始学 —— 学词顺序要按教材来。'
+  if (needSyllabus.value) return '这个词表还没有配套教材。点一下开始生成，生成完才能开始学 —— 学词顺序要按教材来。'
+  if (!overview.value.newCount && !overview.value.reviewCount) return '这个范围现在没有要学的词'
+  return ''
+})
 
 function startStudy() {
   router.push(commitScope(currentScope()))
@@ -811,4 +1003,41 @@ function fmt(d: Date): string {
   border: none; background: none; cursor: pointer; font-size: 22px; line-height: 1;
   color: var(--r-ink2, #999);
 }
+.entry-sub { font-size: 12px; color: var(--r-ink2, #9aa0a6); margin-top: 2px; }
+.start-btn:disabled {
+  opacity: .45; cursor: not-allowed;
+}
+.sy-mask {
+  position: fixed; inset: 0; z-index: 60; padding: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.28);
+}
+.sy-card {
+  background: var(--r-paper, #fff); border-radius: 14px; padding: 18px 20px;
+  width: min(620px, 100%); max-height: 78vh; display: flex; flex-direction: column;
+  box-shadow: 0 16px 44px rgba(0,0,0,.2);
+}
+.sy-head { display: flex; align-items: center; justify-content: space-between; }
+.sy-head h3 { margin: 0; font-size: 16px; }
+.sy-sub { margin: 6px 0 10px; font-size: 12.5px; color: var(--r-ink2, #888); }
+.sy-key { margin-left: 10px; opacity: .7; }
+.sy-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
+.sy-item {
+  display: flex; align-items: center; gap: 10px; padding: 7px 0;
+  border-bottom: 1px solid var(--r-border, #f0f0f0); font-size: 13px;
+}
+.sy-no { width: 26px; text-align: center; color: var(--r-ink2, #aaa); font-size: 12px; }
+.sy-topic { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sy-words { width: 54px; text-align: right; color: var(--r-ink2, #999); font-size: 12px; }
+.sy-state { width: 54px; text-align: right; color: var(--r-ink2, #bbb); font-size: 12px; }
+.sy-state.ok { color: var(--r-accent, #8a4b3a); }
+.icon-btn { border: none; background: none; cursor: pointer; color: var(--r-ink2, #999); font-size: 18px; }
+.sy-others { margin-bottom: 10px; font-size: 12.5px; }
+.sy-others summary { cursor: pointer; color: var(--r-ink2, #888); }
+.sy-other {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0 6px 14px;
+  border-bottom: 1px dashed var(--r-border, #eee);
+}
+.sy-other-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sy-other-n { color: var(--r-ink2, #999); }
 </style>

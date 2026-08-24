@@ -2,6 +2,8 @@
   "name": "languagebridge",
   "private": true,
   "version": "0.1.0",
+  "description": "本地运行的英语学习工作台：3D 词汇关系图、打字与听写练习、整本书导入与逐句对照、影子跟读",
+  "author": "QiaQiaUwU",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -21,7 +23,8 @@
     "type-check": "vue-tsc --noEmit",
     "check": "node scripts/check-templates.mjs",
     "app": "electron electron/main.cjs",
-    "app:build": "electron-builder --win --x64"
+    "app:build": "node scripts/build-desktop.mjs",
+    "app:build:raw": "electron-builder --win --x64"
   },
   "dependencies": {
     "3d-force-graph": "^1.79.0",
@@ -83,7 +86,12 @@
     "extraResources": [
       {
         "from": "resources",
-        "to": "resources"
+        "to": "resources",
+        "filter": [
+          "**/*",
+          "!articles",
+          "!articles/**"
+        ]
       }
     ],
     "win": {

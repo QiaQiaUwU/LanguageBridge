@@ -227,7 +227,10 @@ export async function enrichWords(
           !item.meanings?.[0]?.partOfSpeech
         if (needApi) touched = (await enrichFromApi(item)) || touched
       }
-      if (touched) {
+      // 不管补没补上都盖戳：这次确实为这个词查过词典和接口了
+      const stamped = !item.basicEnrichedAt
+      item.basicEnrichedAt = new Date().toISOString()
+      if (touched || stamped) {
         item.updatedAt = new Date().toISOString()
         changed.push(item)
       }

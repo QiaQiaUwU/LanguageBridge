@@ -60,9 +60,17 @@
           自定义重复次数
           <input v-model.number="repeatCustomCount" type="number" min="1" max="10" />
         </label>
+        <label>
+          每 <input v-model.number="groupSize" type="number" min="2" max="30" class="tiny" /> 个词一组
+          （跟写完一组回头拼写这一组）
+        </label>
+        <label><input v-model="flashcardTyping" type="checkbox" /> 卡片背单词要先把词敲出来</label>
         <label><input v-model="autoMarkStatus" type="checkbox" /> 练完自动标注认识/模糊/不认识</label>
+        <label><input v-model="autoMasterKnown" type="checkbox" /> 判成「认识」的词收进已掌握词表（可在那页移出）</label>
         <label>
           每学 <input v-model.number="scenarioEvery" type="number" min="0" max="200" class="tiny" /> 个新词插一次场景学习（0 = 不插）
+          <span class="ai-dot" title="会调用 AI 接口">✦</span>
+          <em class="cost-note">开着会为这个词表生成一套配套教材（按话题分课、排学习顺序），第一次学时跑一次，消耗额度</em>
         </label>
         <label v-if="autoMarkStatus">
           错 ≤ <input v-model.number="statusKnownLimit" type="number" min="0" max="9" class="tiny" /> 次算认识，
@@ -253,7 +261,10 @@ const showEtymologyAndRelWords = ref(s.showEtymologyAndRelWords)
 const autoPlayFirstSentence = ref(s.autoPlayFirstSentence)
 const identifyMethod = ref(s.identifyMethod)
 const repeatCustomCount = ref(s.repeatCustomCount)
+const groupSize = ref(s.groupSize || 7)
+const flashcardTyping = ref(s.flashcardTyping !== false)
 const autoMarkStatus = ref(s.autoMarkStatus)
+const autoMasterKnown = ref(s.autoMasterKnown !== false)
 const scenarioEvery = ref(s.scenarioEvery ?? 30)
 const statusKnownLimit = ref(s.statusKnownLimit)
 const statusFuzzyLimit = ref(s.statusFuzzyLimit)
@@ -336,7 +347,10 @@ function save() {
     autoPlayFirstSentence: autoPlayFirstSentence.value,
     identifyMethod: identifyMethod.value,
     repeatCustomCount: repeatCustomCount.value,
+    groupSize: Math.max(2, Math.min(30, groupSize.value || 7)),
+    flashcardTyping: flashcardTyping.value,
     autoMarkStatus: autoMarkStatus.value,
+    autoMasterKnown: autoMasterKnown.value,
     scenarioEvery: scenarioEvery.value,
     statusKnownLimit: statusKnownLimit.value,
     statusFuzzyLimit: statusFuzzyLimit.value,
@@ -456,4 +470,9 @@ function save() {
 }
 .ai-dot { color: var(--r-accent, #8a4b3a); font-size: 11px; }
 .f-hint { margin: 6px 0 0; font-size: 11.5px; color: var(--r-ink2, #9aa0a6); }
+.cost-note {
+  display: block; margin-top: 3px;
+  font-size: 12px; font-style: normal; line-height: 1.5;
+  color: var(--r-ink2, #999);
+}
 </style>

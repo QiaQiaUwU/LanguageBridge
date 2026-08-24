@@ -15,10 +15,20 @@
         <button class="speak-btn" @click.stop="speak">
           <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
         </button>
-        <div class="fc-word">{{ current.word }}</div>
+        <!-- 打字练习开着时，正面不直接给词，要自己敲出来（跟 TypeWords 的判定一模一样：
+             逐字符比对、打错标红、打对补上）。关掉就是原来的闪卡。 -->
+        <div v-if="typingOn" class="fc-word typing" :class="{ 'is-wrong': !!ts.wrong }" @click.stop>
+          <template v-for="(seg, i) in letterRuns" :key="i">
+            <span v-if="seg.type === 'done'">{{ seg.val }}</span>
+            <span v-else-if="seg.type === 'wrong'" class="lt-wrong">{{ seg.val }}</span>
+            <span v-else class="lt-rest">{{ seg.val }}</span>
+          </template>
+        </div>
+        <div v-else class="fc-word">{{ current.word }}</div>
+
         <div v-if="current.phonetic" class="fc-phonetic">[{{ current.phonetic }}]</div>
         <div v-if="posText" class="fc-pos">{{ posText }}</div>
-        <div class="fc-hint">点击卡片查看详情</div>
+
       </template>
       <template v-else>
         <div class="fc-word small">{{ current.word }}</div>
@@ -33,7 +43,7 @@
         </div>
         <div v-if="current.memory_tips" class="fc-tips">{{ current.memory_tips }}</div>
       </template>
-      <div class="fc-keys">可用键盘箭头：← 认识 / ↑ 模糊 / → 不认识 / ↓ 翻转</div>
+
     </div>
 
     <div v-else class="flash-done">
@@ -57,6 +67,9 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { WordItem, WordStatus } from '@/shared/types/WordItem'
 import { playWord, playSentence, stopAll } from '@/shared/core/audio'
+import { typeStep, clearAfterWrong, type TypeState } from '@/shared/core/typeStep'
+import { getStudySettings } from '@/shared/core/studySettings'
+import { setKeySound, playKeySound } from '@/shared/core/keySound'
 
 const props = defineProps<{ words: WordItem[] }>()
 const emit = defineEmits<{
@@ -88,6 +101,105 @@ const exampleEn = computed(() =>
 )
 const exampleZh = computed(() => current.value?.example_sentences?.[0]?.zh || '')
 
+/* ---------- 打字练习 ---------- */
+
+/**
+ * 卡片背单词里的打字练习。
+ *
+ * 判定直接复用 typeStep —— 就是背单词流程用的那一套（逐字符比对、
+ * 打错标红并按设置决定清不清、忽略大小写），不另写一份，
+ * 免得两处对"什么算打对"给出不同答案。
+ *
+ * 设置里 flashcardTyping 关掉就完全是原来的闪卡，一行都不变。
+ */
+const settings = getStudySettings()
+const typingOn = ref(settings.flashcardTyping !== false)
+
+const ts = ref<TypeState>({ input: '', wrong: '', inputLock: false, waitClear: false })
+
+let clearTimer: ReturnType<typeof setTimeout> | null = null
+function cancelWrongClear() {
+  if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
+}
+
+function resetTyping() {
+  cancelWrongClear()
+  ts.value = { input: '', wrong: '', inputLock: false, waitClear: false }
+}
+
+/**
+ * 拆成「已打对 / 打错 / 还没打」三段，跟 TypingCard 跟写模式的渲染口径一致。
+ *
+ * **词是显示出来的**，照着敲。第一版做成了下划线占位、只给中文 ——
+ * 那是默写（听写）的玩法，不是跟写。
+ */
+const letterRuns = computed(() => {
+  const word = current.value?.word || ''
+  const st = ts.value
+  const runs: { type: 'done' | 'wrong' | 'rest'; val: string }[] = []
+  if (st.input) runs.push({ type: 'done', val: st.input })
+  if (st.wrong) runs.push({ type: 'wrong', val: st.wrong })
+  const used = st.input.length + st.wrong.length
+  const rest = word.slice(used)
+  if (rest) runs.push({ type: 'rest', val: rest })
+  return runs
+})
+
+function onTypeKey(e: KeyboardEvent): boolean {
+  const word = current.value?.word
+  if (!typingOn.value || !word || flipped.value) return false
+  if (e.ctrlKey || e.metaKey || e.altKey) return false
+  if (e.key.length !== 1 && e.key !== 'Backspace') return false
+
+  if (e.key === 'Backspace') {
+    e.preventDefault()
+    cancelWrongClear()
+    const st = ts.value
+    // 退格要一并解除错字锁，否则 typeStep 会一直 return ignored，键盘像失灵
+    if (st.wrong) ts.value = { ...st, wrong: st.wrong.slice(0, -1), inputLock: false, waitClear: false }
+    else if (st.input) ts.value = { ...st, input: st.input.slice(0, -1), inputLock: false, waitClear: false }
+    return true
+  }
+
+  const r = typeStep(
+    ts.value,
+    { key: e.key, code: e.code, shiftKey: e.shiftKey },
+    word,
+    { ignoreCase: settings.ignoreCase !== false, inputWrongClear: !!settings.inputWrongClear }
+  )
+  if (r.kind === 'ignored') return false
+  e.preventDefault()
+  ts.value = r.state
+  if (settings.keyboardSound) {
+    setKeySound(settings.keyboardSoundFile)
+    playKeySound(settings.keyboardSoundVolume)
+  }
+
+  /**
+   * 打错之后 typeStep 会把状态锁住（inputLock + waitClear），期间所有输入被忽略 ——
+   * 这是故意的，给人看清哪儿错了。**必须有人来解锁**，
+   * 由 clearAfterWrong 在半秒后按设置决定是清掉整个输入还是只清错的那几个字母。
+   * 忘了这一步的话，打错一次键盘就再也没反应了。
+   */
+  if (r.kind === 'wrong') {
+    cancelWrongClear()
+    clearTimer = setTimeout(() => {
+      clearTimer = null
+      ts.value = clearAfterWrong(ts.value, {
+        ignoreCase: settings.ignoreCase !== false,
+        inputWrongClear: !!settings.inputWrongClear
+      })
+    }, 500)
+    return true
+  }
+
+  if (r.kind === 'complete') {
+    // 敲完了就翻面看释义，跟点一下卡片是同一个动作
+    flipped.value = true
+  }
+  return true
+}
+
 function flip() { flipped.value = !flipped.value }
 function speak() { if (current.value) playWord(current.value.word) }
 function speakExample() { if (exampleEn.value) playSentence(exampleEn.value) }
@@ -113,10 +225,15 @@ function restartWrong() {
   marks.value = {}
 }
 
-watch(current, w => { if (w) playWord(w.word) })
+watch(current, w => {
+  resetTyping()
+  if (w) playWord(w.word)
+})
 
 function onKey(e: KeyboardEvent) {
   if (!current.value) return
+  // 打字优先：字母键交给判定，方向键仍然是评价，Esc 仍然是退出
+  if (onTypeKey(e)) return
   if (e.key === 'ArrowLeft') markAndNext('known')
   else if (e.key === 'ArrowUp') markAndNext('fuzzy')
   else if (e.key === 'ArrowRight') markAndNext('unknown')
@@ -126,10 +243,12 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', onKey)
+  if (settings.keyboardSound) setKeySound(settings.keyboardSoundFile)
   if (current.value) playWord(current.value.word)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
+  cancelWrongClear()
   stopAll()
 })
 </script>
@@ -211,6 +330,20 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: #1a1a1a;
   &.small { font-size: 28px; margin-bottom: 16px; }
+  /* 打字状态：等宽 + 字距，免得每敲一个字整行都在跳 */
+  &.typing {
+    font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    letter-spacing: 0.06em;
+    cursor: default;
+  }
+  &.typing.is-wrong { animation: fc-shake .18s; }
+}
+.lt-wrong { color: #c0392b; }
+.lt-rest { color: #c9ccd1; }   /* 还没敲到的部分：浅色，看得见但一眼能分辨 */
+@keyframes fc-shake {
+  0%, 100% { transform: translateX(0); }
+  30% { transform: translateX(-4px); }
+  70% { transform: translateX(4px); }
 }
 
 .fc-phonetic { color: #9a938a; font-size: 18px; margin-top: 14px; }
@@ -225,7 +358,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.fc-hint { color: #b8b1a6; margin-top: 40px; font-size: 15px; }
 
 .fc-def { font-size: 19px; color: #333; line-height: 1.7; }
 
@@ -248,15 +380,6 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   padding: 10px 14px;
   text-align: left;
-}
-
-.fc-keys {
-  position: absolute;
-  bottom: 12px;
-  left: 0;
-  right: 0;
-  color: #c6bfb4;
-  font-size: 12px;
 }
 
 .mark-circle-row {

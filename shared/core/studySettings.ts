@@ -82,6 +82,23 @@ export interface StudySettings {
   scenarioEvery: number
   autoMarkStatus: boolean
 
+  /**
+   * 练完判成「认识」的词，要不要顺手收进已掌握词表。
+   * 收进去就不再排课，所以已掌握那页可以逐个移出。
+   */
+  autoMasterKnown: boolean
+
+  /** 卡片背单词是否要先把词敲出来（关掉就是普通闪卡） */
+  flashcardTyping: boolean
+
+  /**
+   * 一组几个词：跟写完这一组就回头拼写这一组，然后再跟写下一组。
+   * 上游 TypeWords 写死 7（practice-words/[id].vue 的 `const groupSize = 7`），
+   * 设置里也没这一项。这里默认同样是 7，但做成可调 ——
+   * 7 个一组对长词偏多、对短词偏少，没有理由不让人改。
+   */
+  groupSize: number
+
   /** 卡片消消乐：一页放多少对、要不要打乱顺序 */
   matchPairsPerPage: number
   matchShuffle: boolean
@@ -159,6 +176,9 @@ export const DEFAULT_STUDY_SETTINGS: StudySettings = {
 
   scenarioEvery: 30,
   autoMarkStatus: true,
+  autoMasterKnown: true,
+  flashcardTyping: true,
+  groupSize: 7,
   matchPairsPerPage: 10,
   matchShuffle: true,
   statusKnownLimit: 0,

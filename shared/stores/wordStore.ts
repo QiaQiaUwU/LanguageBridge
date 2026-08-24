@@ -62,6 +62,70 @@ export const useWordStore = defineStore('word', () => {
     })
   }
 
+  /**
+   * 按 id 求并集，同 id 取 updatedAt 新的那份。
+   *
+   * 顺便告诉调用方两边各缺什么，好把缺的补回去 ——
+   * 只合并不补齐的话，下次打开还得再合一遍，而且离线时依然是残的。
+   */
+  /**
+   * 删除墓碑。
+   *
+   * 双向合并有个绕不开的坑：本地删了一条、服务端还留着，
+   * 下次合并时它会被算成"本地缺的"再灌回来，删除等于白做。
+   * 记下删过的 id，合并时先把它们从服务端那份里剔掉。
+   * 30 天后自动过期 —— 那时服务端要么已经删掉，要么这条本就该留着。
+   */
+  const TOMB_KEY = 'lb-deleted-word-ids'
+  const TOMB_TTL = 30 * 24 * 3600 * 1000
+
+  function readTombstones(): Record<string, number> {
+    try {
+      const raw = JSON.parse(localStorage.getItem(TOMB_KEY) || '{}')
+      const now = Date.now()
+      const alive: Record<string, number> = {}
+      for (const [id, at] of Object.entries(raw)) {
+        if (typeof at === 'number' && now - at < TOMB_TTL) alive[id] = at
+      }
+      return alive
+    } catch {
+      return {}
+    }
+  }
+
+  function tombstone(ids: string[]) {
+    try {
+      const cur = readTombstones()
+      const now = Date.now()
+      for (const id of ids) cur[id] = now
+      localStorage.setItem(TOMB_KEY, JSON.stringify(cur))
+    } catch { /* 存不下就退化成老行为 */ }
+  }
+
+  function mergeById<T extends { id: string; updatedAt?: string }>(
+    remote: T[],
+    local: T[]
+  ): { list: T[]; missingRemote: T[]; missingLocal: T[] } {
+    const tombs = readTombstones()
+    const remoteAlive = remote.filter(r => !tombs[r.id])   // 删过的不许回来
+
+    const byId = new Map<string, T>()
+    for (const r of remoteAlive) byId.set(r.id, r)
+
+    const missingRemote: T[] = []
+    for (const l of local) {
+      const r = byId.get(l.id)
+      if (!r) { byId.set(l.id, l); missingRemote.push(l); continue }
+      // 都有：谁的时间戳新用谁的。没有时间戳就保留服务端那份
+      if (l.updatedAt && r.updatedAt && l.updatedAt > r.updatedAt) byId.set(l.id, l)
+    }
+
+    const localIds = new Set(local.map(x => x.id))
+    const missingLocal = remoteAlive.filter(r => !localIds.has(r.id))
+
+    return { list: [...byId.values()], missingRemote, missingLocal }
+  }
+
   function normalizeLibraryGroups(list: WordGroup[]): WordGroup[] {
     const ALL_ID = 'book-lib-all'
     const changed: WordGroup[] = []
@@ -100,9 +164,45 @@ export const useWordStore = defineStore('word', () => {
             return
           }
         }
-        words.value = beWords
-        groups.value = normalizeLibraryGroups(beGroups)
-        if (beWords.length > 0) currentWord.value = beWords[0]
+        /**
+         * 两边合并，不是谁覆盖谁。
+         *
+         * 之前是「服务端赢」：直接 `words.value = beWords`。
+         * 于是**离线那段时间在本地导的词表，一旦服务起来就没了** ——
+         * 本地新增的还没来得及上传，就被服务端那份旧数据整个盖掉。
+         * 反过来只信本地也不行（换台机器就丢）。
+         *
+         * 所以按 id 求并集：
+         *   两边都有 → 取 updatedAt 新的那份
+         *   只有一边有 → 收下
+         * 合并完把「服务端缺的」补传上去、把「本地缺的」回灌下来，两边都补齐。
+         */
+        const merged = mergeById(beWords, await db.getAllWords())
+        const mergedGroups = mergeById(beGroups, await db.getAllGroups())
+
+        words.value = merged.list
+        groups.value = normalizeLibraryGroups(mergedGroups.list)
+        if (merged.list.length > 0) currentWord.value = merged.list[0]
+
+        void (async () => {
+          try {
+            // 服务端没有的（多半是离线期间本地新增的）补传上去
+            if (merged.missingRemote.length) {
+              console.log(`[词库] 本地有 ${merged.missingRemote.length} 个词服务端没有，补传上去`)
+              await be.beBulkSaveWords(merged.missingRemote)
+            }
+            if (mergedGroups.missingRemote.length) {
+              await be.beBulkSaveWordGroups(mergedGroups.missingRemote)
+            }
+            // 本地没有的回灌下来，这样离线打开也是全的
+            if (merged.missingLocal.length || mergedGroups.missingLocal.length) {
+              await db.saveWordsBulk(JSON.parse(JSON.stringify(merged.missingLocal)))
+              await db.saveGroupsBulk?.(JSON.parse(JSON.stringify(mergedGroups.missingLocal)))
+            }
+          } catch (e) {
+            console.warn('[词库] 两边补齐时出错，下次打开会重试：', e)
+          }
+        })()
         return
       }
 
@@ -279,6 +379,7 @@ export const useWordStore = defineStore('word', () => {
 
   async function deleteWord(wordId: string) {
     try {
+      tombstone([wordId])   // 服务端删除万一没成功，也别让它下次合并时回灌
       await db.deleteWord(wordId)
       words.value = words.value.filter(w => w.id !== wordId)
 
@@ -615,6 +716,22 @@ export const useWordStore = defineStore('word', () => {
 
     await db.saveWordsBulk(JSON.parse(JSON.stringify(toSave)))
     for (const id of toDelete) await db.deleteWord(id)
+
+    /**
+     * 删除必须同步到服务端，否则等于没删。
+     *
+     * 这里原来只删本地，紧接着 `loadWords()` 又从服务端读一遍 ——
+     * 服务端那份重复词条还在，于是刚删掉的全被读回来，
+     * 界面上「N 个词有重复记录」一个数都不少，看着就像整理功能失灵了。
+     *
+     * 同时记一份墓碑：服务端删除失败（离线、超时）时，
+     * 合并时靠它把这些 id 挡在外面，不让它们借着"本地缺失"的名义回灌。
+     */
+    tombstone(toDelete)
+    await be.beBulkSaveWords(toSave)
+    for (const id of toDelete) {
+      try { await be.beDeleteWord(id) } catch { /* 离线也没关系，墓碑挡着 */ }
+    }
 
     await loadWords()
     return { merged, groupsFixed }

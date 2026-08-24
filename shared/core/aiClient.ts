@@ -69,11 +69,24 @@ async function callViaProxy(req: ProxyRequest, timeoutMs = 60_000): Promise<any>
   return data
 }
 
+/**
+ * jsonOnly：这次调用要的是结构化数据，不是聊天。
+ *
+ * 带思考过程的模型（deepseek-r1、gemini thinking 之类）会把推理写在
+ * `reasoning_content` 里，正文 `content` 有时是空的。聊天场景下把
+ * reasoning 拿来顶上还算聊胜于无；但要 JSON 的时候，
+ * 拿到的是一整段"我们分析单词 undersize d……"，解析必然失败，
+ * 而且一路重试都是同样的结果 —— 补全和教材跑不通就是这么来的。
+ *
+ * 所以要 JSON 时：content 里的 <think> 段先剥掉；content 真为空就直接报错，
+ * 明说这个模型不适合结构化输出，别把思维链塞给上层去解析。
+ */
 export async function askAi(
   prompt: string,
   system?: string,
   maxTokens = 4000,
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  jsonOnly = false
 ): Promise<string> {
   if (!isAiConfigured()) {
     throw new AiError('尚未配置 API Key，请先在设置中填写')
@@ -84,7 +97,119 @@ export async function askAi(
   if (aiSettings.provider === 'anthropic') {
     return askAnthropic(prompt, system, maxTokens, timeoutMs)
   }
-  return askOpenAiCompatible(prompt, system, timeoutMs, maxTokens)
+
+  /**
+   * 被截断就加大配额重来一次。
+   *
+   * 推理模型的思考要占输出配额，同一个提示词，思考长短每次都不一样 ——
+   * 固定一个 max_tokens 必然时灵时不灵，这正是"有时能跑通有时全失败"的来源。
+   * 翻倍一次通常就够；还不够就如实报出来，让人知道该调小批量而不是换模型。
+   */
+  try {
+    return await askOpenAiCompatible(prompt, system, timeoutMs, maxTokens, false, jsonOnly)
+  } catch (e) {
+    if (!(e instanceof TruncatedError)) throw e
+    const bigger = Math.min(32000, maxTokens * 3)
+    if (bigger <= maxTokens) throw e
+    console.warn(`[AI] 输出被截断（max_tokens=${maxTokens}），加大到 ${bigger} 重试一次`)
+    try {
+      return await askOpenAiCompatible(prompt, system, timeoutMs * 2, bigger, false, jsonOnly)
+    } catch (e2) {
+      if (e2 instanceof TruncatedError) {
+        throw new AiError(
+          `输出两次都被截断（${maxTokens} → ${bigger} tokens 都不够）。` +
+          '这个模型的思考过程太长，把每批处理的数量调小，或换一个不带思考过程的模型。'
+        )
+      }
+      throw e2
+    }
+  }
+}
+
+/**
+ * 输出被长度上限截断。单独一个类型，好让上层认出来并加大配额重试。
+ */
+export class TruncatedError extends Error {
+  constructor(public usedTokens: number) {
+    super(`输出被截断（max_tokens=${usedTokens}）`)
+    this.name = 'TruncatedError'
+  }
+}
+
+/**
+ * 从一段夹着推理文字的回复里，把 JSON 主体捞出来。
+ *
+ * 只做定位，不做解析 —— 解析交给各调用方自己那套（它们对数组/对象的要求不同）。
+ * 取最外层第一个 `[`…`]` 或 `{`…`}`，按括号配对找真正的收尾，
+ * 而不是简单地取 lastIndexOf（推理文字里也可能出现括号）。
+ */
+export function salvageJson(text: string): string | null {
+  const t = String(text || '')
+  const found: string[] = []
+
+  /**
+   * 每个起始括号都试一遍，最后取**最长**的那个。
+   *
+   * 只取第一个会被推理文字里的小括号骗到 —— 比如思考里写了
+   * `"topics":[]`，那个空数组会先被捞到，真正的结果反而丢了。
+   */
+  for (const [open, close] of [['[', ']'], ['{', '}']] as const) {
+    for (let start = t.indexOf(open); start >= 0; start = t.indexOf(open, start + 1)) {
+      let depth = 0
+      let inStr = false
+      let esc = false
+      for (let i = start; i < t.length; i++) {
+        const c = t[i]
+        if (inStr) {
+          if (esc) esc = false
+          else if (c === '\\') esc = true
+          else if (c === '"') inStr = false
+          continue
+        }
+        if (c === '"') { inStr = true; continue }
+        if (c === open) depth++
+        else if (c === close) {
+          depth--
+          if (depth === 0) {
+            const body = t.slice(start, i + 1)
+            try { JSON.parse(body); found.push(body) } catch { /* 不是合法 JSON */ }
+            break
+          }
+        }
+      }
+      if (found.length > 40) break   // 够多了，别在超长文本里死磕
+    }
+  }
+
+  if (!found.length) return null
+  return found.sort((a, b) => b.length - a.length)[0]
+}
+
+/**
+ * 剥掉思维链标签。
+ *
+ * 有的服务商不分 reasoning_content，把思考和正文一起塞进 content、用标签隔开。
+ * 标签名各家不同，这里按 SillyTavern 那份常见清单来 ——
+ * 除了 think/thinking，还有推理模型常用的 thought、reflection，
+ * 以及某些国产模型用的全角括号形式 ◁think▷。
+ *
+ * 两种情况都要管：
+ *  - 成对出现  <think>…</think>   → 整段删掉
+ *  - 只有开标签（输出被截断，闭合标签还没写出来）→ 从开标签删到结尾
+ */
+const THINK_TAGS = ['think', 'thinking', 'thought', 'reasoning', 'reflection']
+
+export function stripThinking(text: string): string {
+  let out = String(text || '')
+  for (const tag of THINK_TAGS) {
+    out = out.replace(new RegExp(`<${tag}>[\\s\\S]*?<\\/${tag}>`, 'gi'), '')
+    // 没闭合的开标签：后面全是思考，一并去掉
+    out = out.replace(new RegExp(`<${tag}>[\\s\\S]*$`, 'i'), '')
+  }
+  // ◁think▷…◁/think▷ 这种全角变体
+  out = out.replace(/◁think▷[\s\S]*?◁\/think▷/gi, '')
+  out = out.replace(/◁think▷[\s\S]*$/i, '')
+  return out.trim()
 }
 
 export interface AiTool {
@@ -223,12 +348,55 @@ async function askAnthropic(prompt: string, system?: string, maxTokens = 4000, t
   return (data.content || []).map((c: any) => c.text || '').join('').trim()
 }
 
+/** 关闭思考的参数集。各家名字不一样，一次都带上，认哪个算哪个 */
+const NO_THINK_PARAMS = {
+  reasoning_effort: 'none',
+  enable_thinking: false,
+  thinking: { type: 'disabled' },
+  reasoning: { exclude: true },
+  chat_template_kwargs: { enable_thinking: false }
+} as const
+
+/**
+ * 服务端拒收过这些参数就别再发了。
+ *
+ * 多数 OpenAI 兼容实现会忽略不认识的字段，但有严格校验的会直接 400。
+ * 撞过一次就记下来，本次会话内后续请求都不带 —— 否则每次都要白撞一回。
+ */
+let noThinkRejected = false
+
 async function askOpenAiCompatible(
   prompt: string,
   system?: string,
   timeoutMs = 60_000,
   maxTokens = 4000,
-  heavy = false
+  heavy = false,
+  jsonOnly = false
+): Promise<string> {
+  /**
+   * 带着"别思考"的参数发一次；服务端要是嫌弃这些字段（400），
+   * 记下来、脱掉再发一次。这样严格的服务商也能正常用，
+   * 宽松的（绝大多数）则一直享受"根本不产生思维链"的好处。
+   */
+  try {
+    return await sendChat(prompt, system, timeoutMs, maxTokens, heavy, jsonOnly)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const looksLikeBadParam = /\b400\b|invalid|unsupported|unrecognized|unknown field|extra fields/i.test(msg)
+    if (!jsonOnly || noThinkRejected || !looksLikeBadParam) throw e
+    console.warn('[AI] 服务端不接受关闭思考的参数，脱掉重发一次：', msg)
+    noThinkRejected = true
+    return await sendChat(prompt, system, timeoutMs, maxTokens, heavy, jsonOnly)
+  }
+}
+
+async function sendChat(
+  prompt: string,
+  system: string | undefined,
+  timeoutMs: number,
+  maxTokens: number,
+  heavy: boolean,
+  jsonOnly: boolean
 ): Promise<string> {
   const data = await callViaProxy({
     url: `${aiSettings.baseUrl.replace(/\/$/, '')}/chat/completions`,
@@ -251,6 +419,27 @@ async function askOpenAiCompatible(
        *     一块的 EN/ZH 配对，预扣费也只有几块钱。
        */
       max_tokens: maxTokens,
+
+      /**
+       * 要结构化输出时，直接告诉服务端「别思考」。
+       *
+       * 这是之前一直漏掉的一条，也是 SillyTavern 那类项目处理推理模型的第一手段：
+       * 与其在回复里跟思维链搏斗，不如从源头关掉它。
+       * 各家参数名不统一，所以一次把常见的几种都带上 ——
+       * OpenAI 兼容接口对不认识的字段一般是忽略，带上不会出错；
+       * 万一某家严格校验报了 400，callViaProxy 那边会把错误带回来，
+       * 到时候看错误信息里提到哪个字段，去掉那个就是。
+       *
+       *   reasoning_effort   OpenAI o 系列 / 多数中转站，'none' 或 'low'
+       *   enable_thinking    Qwen、智谱等国产模型
+       *   thinking           Anthropic 风格（经中转转发时也认）
+       *   reasoning.exclude  OpenRouter：思考照跑但不返回
+       *   chat_template_kwargs  vLLM / SGLang 自部署的开源模型
+       *
+       * 只在 jsonOnly 时发。普通对话时思考是有价值的，不该一刀切关掉。
+       */
+      ...(jsonOnly && !noThinkRejected ? NO_THINK_PARAMS : {}),
+
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
         { role: 'user', content: prompt }
@@ -268,11 +457,63 @@ async function askOpenAiCompatible(
    */
   const choice = data.choices?.[0]
   const m = choice?.message || {}
-  const content = (m.content || '').trim()
-  if (content) return content
+  const finishReason = choice?.finish_reason || ''
+
+  /**
+   * **先看有没有被截断，再看拿到了什么。**
+   *
+   * 这是之前处理得最不对的一处：finish_reason 的判断被放在最后，
+   * 只有 content 和 reasoning 都空时才看得到。可推理模型的典型失败是
+   * 「思考写了一大半、配额用光、JSON 一个字还没开始写」——
+   * 这时 reasoning 是有内容的，于是走进 reasoning 分支、捞不到 JSON，
+   * 报出来的却是"这个模型只输出了思考过程"。
+   * 用户看到的是"模型不行"，真实原因是**我们给的 max_tokens 不够**。
+   *
+   * 思考本身要算输出 token，一次推理花掉几千是常事。
+   * 所以截断时不该放弃，该带着更大的配额重来一次。
+   */
+  const truncated = finishReason === 'length'
+
+  const content = stripThinking(m.content || '')
+  if (content) {
+    /**
+     * 正文里也可能夹着一大段推理（没有 <think> 标签、就直接写在正文里）。
+     * 要 JSON 的时候先试着把 JSON 主体捞出来，捞到就只交这一段，
+     * 剩下的废话不必带给上层去解析。捞不到就原样交出去 ——
+     * 上层还有自己的一套提取，别在这里把好数据掐掉。
+     */
+    if (jsonOnly) {
+      const salvaged = salvageJson(content)
+      if (salvaged) return salvaged
+    }
+    return content
+  }
 
   const reasoning = (m.reasoning_content || m.reasoning || '').trim()
-  if (reasoning) return reasoning
+  if (reasoning) {
+    /**
+     * 正文空、只有思考时，**先从思考里把 JSON 捞出来**，别直接放弃。
+     *
+     * 上一版我在这里直接抛错"这个模型做不了结构化输出"—— 太武断了。
+     * 带思考的模型经常是「推理一大段，末尾把答案写出来」，
+     * 答案就埋在 reasoning 里，捞出来完全能用（试跑那条路就是这么过的）。
+     * 真正该丢掉的是推理那部分文字，不是整个回复。
+     *
+     * 捞不到才报错，那时候才是真的没有答案。
+     */
+    if (jsonOnly) {
+      const salvaged = salvageJson(reasoning)
+      if (salvaged) return salvaged
+      if (truncated) throw new TruncatedError(maxTokens)
+      throw new AiError(
+        '模型这次只输出了思考过程，里面找不到 JSON。' +
+        '可以换一个不带思考过程的普通对话模型，或把每批处理的数量调小。'
+      )
+    }
+    return reasoning
+  }
+
+  if (truncated) throw new TruncatedError(maxTokens)
 
   const finish = choice?.finish_reason || '未知'
   if (finish === 'length') {

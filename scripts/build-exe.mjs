@@ -23,7 +23,7 @@
  */
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, cpSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -112,21 +112,44 @@ const portFile = join(OUT_DIR, 'port.txt')
 if (!existsSync(portFile)) writeFileSync(portFile, '58712')
 
 /**
- * 把词库和学习数据一起带上。
+ * 把词库带上。
  *
  * exe 读写的是**自己旁边**的 resources/ 和 data/（见 server-standalone.cjs 顶部），
- * 所以这两个目录必须跟着一起发出去，否则对方打开是个空库。
+ * 所以词库必须跟着一起发出去，否则对方打开是个空库。
  * 不塞进 exe 内部是因为 pkg 打进去的是只读快照，而 AI 补全、收生词、
  * 改标签全都要往 resources/word_explanations/ 里写。
+ *
+ * 两处刻意排除，因为打出来的包是要**发给别人**的：
+ *   resources/articles/  你自己导入和生成的文章（播客稿、教材、笔记正文）
+ *   data/                词表分组、记忆卡片、错词本、活动日志、设置
+ * 这两样是个人资料，跟软件功能无关，别人拿到只会看见你的学习记录。
+ * 词典释义（resources/word_explanations/）留着 —— 那是让软件开箱能用的东西。
+ *
+ * 想连自己的数据一起拷到另一台自己的电脑，别用这个包：
+ * 直接复制整个项目目录，或者用设置页的「整体备份」。
  */
-for (const dir of ['resources', 'data']) {
-  const from = join(ROOT, dir)
-  if (!existsSync(from)) continue
-  const to = join(OUT_DIR, dir)
-  rmSync(to, { recursive: true, force: true })
-  cpSync(from, to, { recursive: true })
-  console.log(`已随包带上 ${dir}/`)
+const SKIP_IN_PACKAGE = ['articles']
+{
+  const from = join(ROOT, 'resources')
+  if (existsSync(from)) {
+    const to = join(OUT_DIR, 'resources')
+    rmSync(to, { recursive: true, force: true })
+    cpSync(from, to, {
+      recursive: true,
+      filter: src => {
+        const rel = relative(from, src)
+        if (!rel) return true
+        const top = rel.split(/[\\/]/)[0]
+        return !SKIP_IN_PACKAGE.includes(top)
+      }
+    })
+    console.log('已随包带上 resources/（词典释义；不含你的文章）')
+  }
 }
+console.log('未随包带上 data/（词表、错词本、学习记录等个人数据）')
+
+// exe 旁边要有个空的 data/，否则对方第一次启动会因为目录不存在而报错
+mkdirSync(join(OUT_DIR, 'data'), { recursive: true })
 
 // 双击就能开、不弹黑窗的启动器。exe 本身跑起来会留一个控制台窗口，
 // 这个 vbs 把它藏起来，跟源码版那个 LanguageBridge.vbs 是同一个思路。
@@ -166,6 +189,6 @@ writeFileSync(join(OUT_DIR, '双击打开 LanguageBridge.vbs'),
 console.log('========================================')
 console.log(`打包完成：${OUT_DIR}`)
 console.log('把整个 dist-exe 文件夹发给别人即可，对方双击「双击打开 LanguageBridge.vbs」就能用')
-console.log('里面是：exe + resources（词库）+ data（学习数据）+ port.txt')
+console.log('里面是：exe + resources（词典释义，不含你的文章）+ 空的 data/ + port.txt')
 console.log('exe 图标是系统默认的（原因见本文件顶部注释）')
 console.log('========================================')

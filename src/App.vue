@@ -177,7 +177,17 @@ const stopSync = onSyncStatus(s => {
   if (syncWarned || localStorage.getItem(SYNC_DISMISS_KEY)) return
   if (s.failed >= 5) {
     syncWarned = true
-    syncWarn.value = '没有连上后端，这些改动只存在浏览器本地。想要磁盘备份的话启动 backend 目录里的服务；不需要就点掉，不再提醒。'
+    /**
+     * 把失败的接口名和原因带出来。
+     *
+     * 原来只说"没有连上后端"，可后端多半是连着的 —— 真正的原因通常是
+     * 某一个接口超时或报错（批量写入慢、某个路由不存在）。
+     * 光看这句话没人知道该查什么，只能干着急。
+     */
+    const detail = s.lastError ? `（最近一次：${s.lastError}）` : ''
+    syncWarn.value =
+      `有 ${s.failed} 次数据同步没成功${detail}，这些改动暂时只在浏览器本地。` +
+      '本机服务没起来的话，双击「启动LanguageBridge.bat」；不需要磁盘备份就点掉，不再提醒。'
   }
 })
 function dismissSyncWarn() {

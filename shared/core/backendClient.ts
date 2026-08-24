@@ -2,11 +2,24 @@ import type { Article, ArticleGroup } from '@/shared/types/Article'
 import type { WordItem, WordGroup } from '@/shared/types/WordItem'
 
 const BACKEND_BASE = ''
-const TIMEOUT_MS = 2500
 
-async function beFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
+/**
+ * 超时。
+ *
+ * 普通读写 2.5 秒足够；但**批量写入是另一回事** —— 导一本三千词的词典进来，
+ * 后端要拆成几千个 JSON 文件落盘，2.5 秒必然超。
+ * 超时之后 fetch 被 abort、这里返回 null，前端于是把它记成一次同步失败，
+ * 攒够 5 次就弹「没有连上后端，这些改动只存在浏览器本地」——
+ * 可后端其实连着，只是没来得及答应。词表导入看着"没成功"就是这么来的。
+ *
+ * 所以批量接口单独给一个长超时。
+ */
+const TIMEOUT_MS = 2500
+const BULK_TIMEOUT_MS = 120_000
+
+async function beFetch<T>(path: string, options?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T | null> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(`${BACKEND_BASE}${path}`, { ...options, signal: controller.signal })
     if (!res.ok) return null
@@ -134,7 +147,7 @@ export async function beBulkSaveWords(words: WordItem[]): Promise<boolean> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(words)
-  })
+  }, BULK_TIMEOUT_MS)
   return r !== null
 }
 
@@ -157,7 +170,7 @@ export async function bePatchWordLibrary(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ updates })
-  })
+  }, BULK_TIMEOUT_MS)
 }
 
 export async function beRebuildWordCache(): Promise<
@@ -176,7 +189,7 @@ export async function beBulkSaveWordGroups(groups: WordGroup[]): Promise<boolean
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(groups)
-  })
+  }, BULK_TIMEOUT_MS)
   return r !== null
 }
 
@@ -194,7 +207,7 @@ export async function beBulkSaveFsrs(rows: { id: string; card: any }[]): Promise
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rows)
-  })
+  }, BULK_TIMEOUT_MS)
   return r !== null
 }
 
@@ -208,7 +221,7 @@ export async function beBulkSaveMastered(rows: { id: string }[]): Promise<boolea
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rows)
-  })
+  }, BULK_TIMEOUT_MS)
   return r !== null
 }
 

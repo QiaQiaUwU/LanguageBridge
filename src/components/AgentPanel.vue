@@ -81,6 +81,8 @@
 
       <label class="s-label">Base URL（通常以 /v1 结尾）</label>
       <input v-model="aiSettings.baseUrl" class="s-input" autocomplete="off" :placeholder="aiSettings.provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.deepseek.com/v1'" />
+      <!-- 少打一个 v 是最常见的错，报出来的是 404，从错误信息上根本看不出是地址写错了 -->
+      <p v-if="baseUrlWarn" class="s-warn">{{ baseUrlWarn }}</p>
 
       <label class="s-label">API Key</label>
       <div class="key-row">
@@ -98,7 +100,7 @@
       <p v-if="modelsError" class="models-error">{{ modelsError }}</p>
 
       <button class="ghost-btn small" :disabled="probing2" @click="probeQuota">
-        {{ probing2 ? '测试中…' : '测一下额度够不够（发两个大小不同的请求）' }}
+        {{ probing2 ? '测试中…' : '测额度' }}
       </button>
       <pre v-if="probeOut" class="s-hint" style="white-space: pre-wrap">{{ probeOut }}</pre>
 
@@ -110,16 +112,11 @@
         autocomplete="off"
         placeholder="留空就用上面那个"
       />
-      <p class="s-hint">
-        整理转录稿这类要吐大段内容的任务用它。有些中转站按模型的<b>上下文窗口</b>整个预扣费，
-        百万窗口的模型一次就要预扣几百块余额，报 403「预扣费额度失败」——
-        跟我们发多少 max_tokens 无关。这里填个小窗口的便宜模型即可。
-      </p>
+      <p class="s-hint">长文任务用，留空就用上面那个</p>
       <div v-if="availableModels.length" class="models-grid">
         <button v-for="m in availableModels" :key="m" class="model-item" @click="aiSettings.model = m">{{ m }}</button>
       </div>
 
-      <p class="settings-note">Key 仅存本地浏览器，请求经本机本地服务转发（避开浏览器跨域限制），不经过任何我们自建的远程服务器。</p>
       <div class="test-row">
         <button class="dark-btn" :disabled="testing || !aiSettings.apiKey" @click="testConnection">
           {{ testing ? '测试中…' : '测试连接' }}
@@ -426,7 +423,7 @@ async function probeQuota() {
     probeOut.value = lines.join('\n')
   }
   lines.push('')
-  lines.push('怎么看：全成功 = 跟请求大小无关；小的成功大的失败 = 请求越大预扣越多；全失败 = 账户门槛问题。')
+
   probeOut.value = lines.join('\n')
   probing2.value = false
 }
@@ -434,6 +431,21 @@ const modelsError = ref('')
 const testing = ref(false)
 const testResult = ref('')
 const testOk = ref(false)
+
+/**
+ * Base URL 的常见写错。
+ *
+ * OpenAI 兼容接口的路径是 `/v1`，少打一个 v 写成 `/1` 或者干脆不写，
+ * 服务端返回的都是 404 —— 而 404 看起来像"模型不存在"或"服务挂了"，
+ * 没人会想到是地址少了一个字母。这里直接点破。
+ */
+const baseUrlWarn = computed(() => {
+  const u = (aiSettings.baseUrl || '').trim().replace(/\/+$/, '')
+  if (!u || aiSettings.provider === 'anthropic') return ''
+  if (/\/v\d+$/.test(u)) return ''
+  if (/\/\d+$/.test(u)) return '路径像是少了一个 v，OpenAI 兼容接口通常是 /v1'
+  return '这个地址没有以 /v1 结尾，多数中转站会返回 404'
+})
 
 const PROVIDER_DEFAULTS: Record<'anthropic' | 'openai', { baseUrl: string; model: string }> = {
   anthropic: { baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
@@ -773,4 +785,8 @@ function onDragEnd(e: PointerEvent) {
 }
 .send-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.s-warn {
+  margin: 4px 0 0; font-size: 12px; line-height: 1.5;
+  color: #c0392b;
+}
 </style>

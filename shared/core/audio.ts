@@ -60,12 +60,64 @@ function speakTTS(text: string, rate = 0.95, volume = 1): Promise<void> {
   })
 }
 
-export function playWord(word: string, accent?: Accent, rate = 0.95, volume?: number): Promise<void> {
+/**
+ * 发音缓存。
+ *
+ * 原来每次发音都 `new Audio(有道URL)` —— 每一次都是一趟网络请求。
+ * 同一个词在一轮练习里要读好几遍（进入时、按提示键、打错时、打完时），
+ * 每遍都要等网络，就成了"按下去过一会儿才响"。网络稍慢或者被限流时更明显。
+ *
+ * 拿到一次就把音频数据留在内存里，之后直接放 blob，零延迟。
+ * 上限 300 条，够一轮练习用；超了按插入顺序丢最早的，不会无限涨。
+ */
+const wordAudioCache = new Map<string, string>()
+const WORD_CACHE_MAX = 300
+
+function cacheKey(word: string, acc: Accent) {
+  return acc + ':' + word.toLowerCase()
+}
+
+async function cachedWordUrl(word: string, acc: Accent): Promise<string> {
+  const key = cacheKey(word, acc)
+  const hit = wordAudioCache.get(key)
+  if (hit) return hit
+  const remote = youdaoUrl(word, acc)
+  try {
+    const res = await fetch(remote)
+    if (!res.ok) return remote
+    const url = URL.createObjectURL(await res.blob())
+    if (wordAudioCache.size >= WORD_CACHE_MAX) {
+      const oldest = wordAudioCache.keys().next().value
+      if (oldest) {
+        const old = wordAudioCache.get(oldest)
+        if (old) URL.revokeObjectURL(old)
+        wordAudioCache.delete(oldest)
+      }
+    }
+    wordAudioCache.set(key, url)
+    return url
+  } catch {
+    // 取不到就还用远程地址，行为跟以前一样
+    return remote
+  }
+}
+
+/**
+ * 预取一个词的发音，不播。
+ * 练习页可以在显示下一个词之前先调一下，轮到它时就是本地的了。
+ */
+export function prefetchWord(word: string, accent?: Accent): void {
+  if (!word) return
+  void cachedWordUrl(word, accent || currentAccent())
+}
+
+export async function playWord(word: string, accent?: Accent, rate = 0.95, volume?: number): Promise<void> {
   const acc: Accent = accent || currentAccent()
   const vol = volume ?? currentWordVolume()
+  const src = await cachedWordUrl(word, acc)
   stopAll()
   return new Promise(resolve => {
-    const audio = new Audio(youdaoUrl(word, acc))
+    const audio = new Audio(src)
     audio.volume = vol
     currentAudio = audio
     let settled = false

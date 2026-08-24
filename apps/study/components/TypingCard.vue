@@ -96,9 +96,9 @@
                  目标词本身高亮。整句朗读挪到右边那个小喇叭上 ——
                  原来是点句子任意位置朗读，接了查词就冲突了。 -->
             <span
-              v-for="(tk, ti) in tokensOf(se.en)"
+              v-for="(tk, ti) in sentenceTokens[i] || []"
               :key="ti"
-              :class="tk.isWord ? (isTargetToken(tk.text) ? 'tk hit' : 'tk') : ''"
+              :class="tk.cls"
               @click="tk.isWord && lookup(tk.text, $event)"
             >{{ tk.text }}</span>
             <button class="s-speak" title="朗读这句" @click.stop="speakSentence(i)">
@@ -117,9 +117,9 @@
             <div v-for="(p, i) in phrasePairs" :key="i" class="phrase">
               <span class="en">
                 <span
-                  v-for="(tk, ti) in tokensOf(p.en)"
+                  v-for="(tk, ti) in phraseTokens[i] || []"
                   :key="ti"
-                  :class="tk.isWord ? (isTargetToken(tk.text) ? 'tk hit' : 'tk') : ''"
+                  :class="tk.cls"
                   @click="tk.isWord && lookup(tk.text, $event)"
                 >{{ tk.text }}</span>
               </span>
@@ -256,10 +256,25 @@ async function deleteNote() {
 
 /* ---------- 例句 / 短语里的可点词 ---------- */
 
-/** 切成「单词 / 非单词」片段，跟阅读助手用的是同一个 splitEnglishText */
-function tokensOf(text: string) {
-  return splitEnglishText(text || '')
+/**
+ * 例句和短语切好的片段，连 class 一起算完。
+ *
+ * 原来是在模板里直接调 `tokensOf(se.en)` 和 `isTargetToken(...)` ——
+ * 模板里的函数调用**每次重渲染都会重跑**，而打字时每按一个键都会重渲染。
+ * 一篇卡片十几个例句、每句二三十个片段，等于每次按键做几百次分词和字符串比较，
+ * 手感上就是按键音和反应都慢半拍。
+ * 换成 computed，只有词本身变了才重算。
+ */
+interface Tok { text: string; isWord: boolean; cls: string }
+
+function toTokens(text: string): Tok[] {
+  return splitEnglishText(text || '').map(t => ({
+    text: t.text,
+    isWord: t.isWord,
+    cls: t.isWord ? (isTargetToken(t.text) ? 'tk hit' : 'tk') : ''
+  }))
 }
+
 
 /** 这个词是不是正在练的目标词（含常见变形），是就高亮 */
 function isTargetToken(tk: string): boolean {
@@ -336,6 +351,9 @@ const phrasePairs = computed(() =>
     .map(p => ({ en: String(p.phrase_en || '').trim(), zh: String(p.phrase_zh || '').trim() }))
     .filter(x => x.en)
 )
+
+const sentenceTokens = computed<Tok[][]>(() => sentencePairs.value.map(se => toTokens(se.en)))
+const phraseTokens = computed<Tok[][]>(() => phrasePairs.value.map(p => toTokens(p.en)))
 
 /** 近义词，对应它的 synos 区块 */
 const synonymList = computed(() =>
