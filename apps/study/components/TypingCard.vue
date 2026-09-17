@@ -42,7 +42,7 @@
     </div>
 
     <div v-if="collectOpen" class="collect-box">
-      <p v-if="!wordStore.groups.length" class="cb-empty">还没有词表</p>
+      <p v-if="!wordStore.groups.length" class="cb-empty">暂无</p>
       <button
         v-for="g in wordStore.groups"
         :key="g.id"
@@ -937,7 +937,7 @@ onUnmounted(() => {
 }
 .meaning {
   font-size: 1.2rem;
-  color: var(--r-ink, #1f2328);
+  color: var(--c-text);
   margin: 0;
   max-width: 100%;
   line-height: 1.7;
@@ -949,7 +949,7 @@ onUnmounted(() => {
    释义在右边成块换行，不跟着词性缩进走。 */
 .pos {
   flex-shrink: 0; min-width: 2.5rem;   /* @apply min-w-10 */
-  color: var(--r-accent, #5b7a99);
+  color: var(--c-accent);
 }
 .pos-text { flex: 1; min-width: 0; }
 .word-line {
@@ -963,7 +963,7 @@ onUnmounted(() => {
 }
 .input-right { color: rgb(22, 163, 74); }
 .input-wrong { color: rgba(255, 0, 0, 0.6); }
-.word-end { color: var(--r-ink2, #999); }
+.word-end { color: var(--c-text-2); }
 .word-end.hide { letter-spacing: 0.14em; opacity: 0.45; }
 .word-line.is-wrong { animation: shake 0.16s ease 2; }
 .word-line.is-sentence { white-space: normal; word-break: break-word; line-height: 1.6; letter-spacing: 0; }
@@ -974,7 +974,7 @@ onUnmounted(() => {
 }
 .meta-line.top {
   min-height: 22px;
-  color: var(--r-ink2, #9aa0a6);
+  color: var(--c-text-2);
   font-size: 15px;
   letter-spacing: 0.02em;
 }
@@ -982,7 +982,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 14px;
-  color: var(--r-ink2, #b6bcc3);
+  color: var(--c-text-2);
   min-height: 26px;
 }
 .speak-btn {
@@ -995,26 +995,26 @@ onUnmounted(() => {
 }
 .identify-row { display: flex; gap: 10px; margin-top: 6px; }
 .choice-btn kbd { opacity: 0.5; margin-right: 6px; }
-.choice-btn.right { border-color: #3a8a5c; background: color-mix(in srgb, #3a8a5c 14%, transparent); }
-.choice-btn.wrong { border-color: #b5493c; background: color-mix(in srgb, #b5493c 14%, transparent); }
+.choice-btn.right { border-color: var(--c-success); background: color-mix(in srgb, var(--c-success) 14%, transparent); }
+.choice-btn.wrong { border-color: var(--c-danger); background: color-mix(in srgb, var(--c-danger) 14%, transparent); }
 .idt-btn {
   padding: 8px 18px;
   border-radius: 18px;
-  border: 1px solid var(--r-border, #ddd);
-  background: var(--r-ui, #f6f6f6);
-  color: var(--r-ink, #333);
+  border: 1px solid var(--c-line);
+  background: var(--c-surface-2);
+  color: var(--c-text);
   cursor: pointer;
   font-size: 14px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  &:hover { background: var(--r-paper, #fff); }
+  &:hover { background: var(--c-surface); }
 }
 /* 「已掌握」比另外两个更肯定，给个明确的绿色，不然三个按钮长得一样分不清 */
 .idt-btn.mastered {
-  border-color: color-mix(in srgb, #3a8a5c 45%, transparent);
-  color: #3a8a5c;
-  &:hover { background: color-mix(in srgb, #3a8a5c 8%, transparent); }
+  border-color: color-mix(in srgb, var(--c-success) 45%, transparent);
+  color: var(--c-success);
+  &:hover { background: color-mix(in srgb, var(--c-success) 8%, transparent); }
 }
 
 .idt-btn kbd {
@@ -1024,67 +1024,67 @@ onUnmounted(() => {
   border-radius: 3px;
   padding: 0 4px;
 }
-.hint { font-size: 12.5px; color: var(--r-ink2, #aaa); margin: 0; }
+.hint { font-size: 12.5px; color: var(--c-text-2); margin: 0; }
 .sent-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 10px; }
 .sent-btn {
   display: inline-flex; align-items: center; gap: 5px;
-  border: 1px solid var(--r-border, #ddd); background: transparent; color: var(--r-ink2, #888);
+  border: 1px solid var(--c-line); background: transparent; color: var(--c-text-2);
   border-radius: 9999px; padding: 3px 10px; font-size: 12px; cursor: pointer;
 }
-.sent-btn:hover { color: var(--r-accent, #8a4b3a); border-color: var(--r-accent, #8a4b3a); }
+.sent-btn:hover { color: var(--c-accent); border-color: var(--c-accent); }
 /* 原来是 left: nav+56px; top: 22px —— 正好贴在退出按钮（nav+14，宽 30）右边，
    而它开头还有一个「←」，看上去就是两个返回号。改成挪到退出按钮正下方，
    箭头换成「上一个」三个字，不再和返回撞。 */
 .prev-corner {
   position: fixed; left: calc(var(--lb-nav-w, 56px) + 14px); top: 52px;
   display: flex; align-items: center; gap: 6px;
-  color: var(--r-ink2, #c3c8ce); font-size: 14px; pointer-events: none;
+  color: var(--c-text-2); font-size: 14px; pointer-events: none;
 }
 .pc-label { font-size: 12px; opacity: .75; }
 
 /* 笔记/收藏展开后的两个小面板（.icon-row 上面已经有了，不再重复定义） */
-.speak-btn.on { color: var(--r-accent, #8a4b3a); }
+.speak-btn.on { color: var(--c-accent); }
 .collect-box {
   display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
   max-width: 520px;
 }
 .cb-item {
-  border: 1px solid var(--r-line, #e5e7eb); background: transparent;
-  color: var(--r-ink, #1f2328); font-family: inherit; font-size: 13px;
+  border: 1px solid var(--r-line, var(--c-line)); background: transparent;
+  color: var(--c-text); font-family: inherit; font-size: 13px;
   padding: 5px 12px; border-radius: 999px; cursor: pointer;
 }
-.cb-item:hover { background: var(--r-ui, #f4f5f7); }
+.cb-item:hover { background: var(--c-surface-2); }
 .cb-item.in { opacity: .55; }
-.cb-in { margin-left: 6px; font-size: 11px; color: var(--r-ink2, #9aa0a6); }
-.cb-empty { font-size: 13px; color: var(--r-ink2, #9aa0a6); }
+.cb-in { margin-left: 6px; font-size: 11px; color: var(--c-text-2); }
+.cb-empty { font-size: 13px; color: var(--c-text-2); }
 .note-box { width: 100%; max-width: 520px; }
 .nb-input {
   width: 100%; padding: 8px 10px; font-family: inherit; font-size: 13.5px;
-  border: 1px solid var(--r-line, #e5e7eb); border-radius: 10px;
-  background: transparent; color: var(--r-ink, #1f2328); resize: vertical;
+  border: 1px solid var(--r-line, var(--c-line)); border-radius: 10px;
+  background: transparent; color: var(--c-text); resize: vertical;
 }
 .nb-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 .nb-btn {
-  border: none; background: var(--r-ui, #f4f5f7); color: var(--r-ink, #1f2328);
+  border: none; background: var(--c-surface-2); color: var(--c-text);
   font-family: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
 }
-.nb-btn.primary { background: var(--r-ink, #1f2328); color: #fff; }
+.nb-btn.primary { background: var(--c-text); color: var(--c-text-on-accent); }
 /* 例句/短语里的可点词 */
 .tk { cursor: pointer; border-radius: 3px; }
-.tk:hover { background: var(--r-ui, #eef1f4); }
+.tk:hover { background: var(--c-surface-2); }
 .tk.hit {
-  color: var(--r-accent, #8a4b3a);
+  color: var(--c-accent);
   font-weight: 600;
   background: rgba(138, 75, 58, .09);
 }
 .s-speak {
   border: none; background: transparent; cursor: pointer; padding: 0 4px;
-  color: var(--r-ink2, #b6bcc3); vertical-align: middle;
+  color: var(--c-text-2); vertical-align: middle;
 }
-.s-speak:hover { color: var(--r-accent, #8a4b3a); }
+.s-speak:hover { color: var(--c-accent); }
 .note-view {
   max-width: 520px; font-size: 13px; line-height: 1.6;
-  color: var(--r-ink2, #6b7280); white-space: pre-wrap;
+  color: var(--c-text-2); white-space: pre-wrap;
 }
 /* 遮词的模式下音标也得遮：默写时露着音标等于把答案给出去了 */
 .ph-hide { filter: blur(6px); user-select: none; }
@@ -1099,7 +1099,7 @@ onUnmounted(() => {
    块与块之间是 <div class="line-white my-3"> 一条细线。 */
 .detail-block { width: 100%; text-align: left; }
 .line-white {
-  height: 1px; background: var(--r-border, #eceff2);
+  height: 1px; background: var(--c-line);
   margin: 0.75rem 0;                /* my-3 */
 }
 .sentence {
@@ -1109,22 +1109,22 @@ onUnmounted(() => {
   /* 整句不再可点了：点词是查释义，朗读挪到右边那个小喇叭。
      留着 cursor: pointer 会让人以为点哪儿都能读。 */
   transition: all .3s;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #5b7a99) 8%, transparent); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
 }
-.s-en { font-size: 1.25rem; line-height: 1.6; color: var(--r-ink, #1f2328); }
-.s-cn { font-size: 1rem; line-height: 1.6; color: var(--r-ink2, #8a9099); }
+.s-en { font-size: 1.25rem; line-height: 1.6; color: var(--c-text); }
+.s-cn { font-size: 1rem; line-height: 1.6; color: var(--c-text-2); }
 .blk { display: flex; }
 .label {
   width: 6rem; padding-top: 0.2rem; flex-shrink: 0;
-  color: var(--r-ink2, #9aa0a6); font-size: 1rem;
+  color: var(--c-text-2); font-size: 1rem;
 }
 .blk-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
-.blk-body.pre { white-space: pre-wrap; font-size: 1rem; color: var(--r-ink2, #8a9099); }
+.blk-body.pre { white-space: pre-wrap; font-size: 1rem; color: var(--c-text-2); }
 /* 短语行：英文 + 小喇叭 + 中文。gap 从 1rem 收到 0.6rem，
    因为中间多插了一个喇叭按钮，原来的间距会把中文推得太远 */
 .phrase { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-.phrase .en { font-size: 1.125rem; color: var(--r-ink, #1f2328); }
-.phrase .cn { font-size: 1rem; color: var(--r-ink2, #8a9099); }
+.phrase .en { font-size: 1.125rem; color: var(--c-text); }
+.phrase .cn { font-size: 1rem; color: var(--c-text-2); }
 .syno-body { flex-direction: row; flex-wrap: wrap; gap: 0.25rem 1rem; }
-.syno { font-size: 1.125rem; color: var(--r-accent, #5b7a99); cursor: help; }
+.syno { font-size: 1.125rem; color: var(--c-accent); cursor: help; }
 </style>

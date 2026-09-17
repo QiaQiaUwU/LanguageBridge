@@ -7,13 +7,11 @@
     <template v-else>
       <div class="lm-toolbar">
         <button class="dark-btn" :disabled="scanning" @click="pickFolder">
-          {{ scanning ? '扫描中…' : folderName ? `重新选择文件夹（当前：${folderName}）` : '选择听力材料文件夹' }}
+          {{ scanning ? '扫描中…' : folderName || '选择文件夹' }}
         </button>
-        <input v-model="search" class="search-input" placeholder="搜索文件名" />
+        <input v-model="search" class="search-input" placeholder="搜索" />
       </div>
-      <p class="lm-hint">文件夹内 mp3/wav/m4a 音频若有同名 .txt 文本，会自动作为原文展示；建议单词间用下划线或空格分隔命名。</p>
-
-      <div v-if="!filtered.length && folderName" class="empty-hint">未找到音频文件</div>
+      <div v-if="!filtered.length && folderName" class="empty-hint">暂无</div>
 
       <div class="lm-list">
         <div
@@ -181,32 +179,28 @@ async function extractVocab() {
 
 <style lang="scss" scoped>
 .listening-materials { padding-top: 4px; }
-.unsupported { color: #b05a4a; background: #f9ece9; border-radius: 10px; padding: 16px; font-size: 14px; }
+.unsupported { color: var(--c-danger); background: #f9ece9; border-radius: 10px; padding: 16px; font-size: 14px; }
 
 .lm-toolbar { display: flex; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
-.lm-hint { color: #999; font-size: 12.5px; margin-bottom: 16px; }
+.lm-hint { color: var(--c-text-2); font-size: 12.5px; margin-bottom: 16px; }
 .dark-btn {
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--r-accent, #8a4b3a); color: #fff; border-radius: 8px; padding: 9px 18px; font-size: 13.5px; cursor: pointer; &:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); } &:disabled { opacity: 0.5; } }
-.ghost-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent); background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; &:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); } &:disabled { opacity: 0.5; } }
-.search-input { border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; outline: none; &:focus { border-color: #999; } }
-
-.empty-hint { color: #999; padding: 20px 0; text-align: center; }
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
+  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--c-accent); color: var(--c-text-on-accent); border-radius: 8px; padding: 9px 18px; font-size: 13.5px; cursor: pointer; &:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 82%, #000); } &:disabled { opacity: 0.5; } }
+.search-input { border: 1px solid var(--c-line); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; outline: none; &:focus { border-color: #999; } }
 
 .lm-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; margin-bottom: 18px; }
 .lm-item {
-  display: flex; align-items: center; justify-content: space-between; padding: 9px 14px; border: 1px solid #eee; border-radius: 8px; cursor: pointer; font-size: 13.5px;
-  &:hover { background: #fafafa; }
-  &.on { border-color: transparent; background: #f5f5f5; }
+  display: flex; align-items: center; justify-content: space-between; padding: 9px 14px; border: 1px solid var(--c-line); border-radius: 8px; cursor: pointer; font-size: 13.5px;
+  &:hover { background: var(--c-surface-2); }
+  &.on { border-color: transparent; background: var(--c-surface-2); }
 }
-.lm-name { color: #333; }
-.lm-tag { font-size: 11px; color: #4a7d3a; background: #eef4e8; padding: 2px 8px; border-radius: 8px; }
+.lm-name { color: var(--c-text); }
+.lm-tag { font-size: 11px; color: var(--c-success); background: #eef4e8; padding: 2px 8px; border-radius: 8px; }
 
-.lm-player { border-top: 1px solid #eee; padding-top: 16px; }
+.lm-player { border-top: 1px solid var(--c-line); padding-top: 16px; }
 .lm-transcript { margin-top: 14px; }
-.lm-transcript-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; h4 { font-size: 14px; color: #1a1a1a; } }
-.transcript-text { font-size: 14px; color: #444; line-height: 1.8; white-space: pre-wrap; background: #fafafa; border-radius: 8px; padding: 14px; max-height: 240px; overflow-y: auto; }
-.no-transcript { color: #999; font-size: 13px; margin-top: 10px; }
-.extract-msg { margin-top: 10px; color: #4a7d3a; font-size: 13px; }
+.lm-transcript-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; h4 { font-size: 14px; color: var(--c-text); } }
+.transcript-text { font-size: 14px; color: var(--c-text); line-height: 1.8; white-space: pre-wrap; background: var(--c-surface-2); border-radius: 8px; padding: 14px; max-height: 240px; overflow-y: auto; }
+.no-transcript { color: var(--c-text-2); font-size: 13px; margin-top: 10px; }
+.extract-msg { margin-top: 10px; color: var(--c-success); font-size: 13px; }
 </style>

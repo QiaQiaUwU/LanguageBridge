@@ -3,7 +3,7 @@
     <div class="study-panel">
       <div class="study-head">
         <span>学习模式</span>
-        <button class="close-btn" @click="$emit('close')">×</button>
+        <CloseButton class="close-btn" @click="$emit('close')" />
       </div>
 
       <div v-if="phase === 'setup'" class="study-setup">
@@ -23,7 +23,7 @@
           <button class="study-act" :disabled="running || !aiReady" @click="run('structure')">知识架构</button>
           <button class="study-act primary" :disabled="running || !aiReady" @click="run('quiz')">出题自测</button>
         </div>
-        <p v-if="!aiReady" class="hint">请先点右下角悬浮按钮配置好 API Key</p>
+        <p v-if="!aiReady" class="hint">未配置 API Key</p>
       </div>
 
       <div v-else-if="phase === 'loading'" class="study-loading">
@@ -168,7 +168,7 @@ function saveAll() {
   padding: 16px;
 }
 .study-panel {
-  background: #fff;
+  background: var(--c-surface);
   border-radius: 14px;
   width: min(560px, 100%);
   max-height: 85vh;
@@ -180,57 +180,57 @@ function saveAll() {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--c-line);
   font-size: 16px;
   font-weight: 600;
   position: sticky;
   top: 0;
-  background: #fff;
+  background: var(--c-surface);
 }
-.close-btn { border: none; background: none; font-size: 22px; cursor: pointer; color: #999; line-height: 1; }
-.close-btn:hover { color: #333; }
+.close-btn { border: none; background: none; font-size: 22px; cursor: pointer; color: var(--c-text-2); line-height: 1; }
+.close-btn:hover { color: var(--c-text); }
 
 .study-setup { padding: 20px; }
-.setup-label { font-size: 13.5px; color: #666; margin-bottom: 10px; }
-.range-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; color: #333; margin-bottom: 8px; }
+.setup-label { font-size: 13.5px; color: var(--c-text-2); margin-bottom: 10px; }
+.range-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; color: var(--c-text); margin-bottom: 8px; }
 .range-row input {
   width: 64px;
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 6px;
   padding: 6px 8px;
   font-size: 14px;
   text-align: center;
 }
-.range-hint { color: #999; font-size: 12.5px; margin-bottom: 18px; }
+.range-hint { color: var(--c-text-2); font-size: 12.5px; margin-bottom: 18px; }
 .setup-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .study-act {
-  border: 1px solid var(--r-border, #ddd);
-  background: #fff;
+  border: 1px solid var(--c-line);
+  background: var(--c-surface);
   border-radius: 9px;
   padding: 10px 18px;
   font-size: 14px;
   cursor: pointer;
-  &:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); }
+  &:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface)); }
   &:disabled { opacity: 0.4; cursor: not-allowed; }
 }
-.study-act.primary { background: var(--r-accent, #8a4b3a); color: #fff; border-color: transparent; }
-.study-act.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
+.study-act.primary { background: var(--c-accent); color: var(--c-text-on-accent); border-color: transparent; }
+.study-act.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
 
-.study-loading, .study-error { padding: 60px 20px; text-align: center; color: #666; }
+.study-loading, .study-error { padding: 60px 20px; text-align: center; color: var(--c-text-2); }
 .study-error button { margin-top: 14px; }
 
 .study-body { padding: 18px 20px; }
 .point-card, .quiz-card {
-  border: 1px solid #eee;
+  border: 1px solid var(--c-line);
   border-radius: 10px;
   padding: 14px 16px;
   margin-bottom: 12px;
 }
-.point-title { font-weight: 600; color: #1a1a1a; font-size: 14.5px; margin-bottom: 6px; }
-.point-detail { color: #444; font-size: 13.5px; line-height: 1.6; margin-bottom: 8px; }
-.point-quote { color: #999; font-size: 12.5px; font-style: italic; margin-bottom: 8px; }
+.point-title { font-weight: 600; color: var(--c-text); font-size: 14.5px; margin-bottom: 6px; }
+.point-detail { color: var(--c-text); font-size: 13.5px; line-height: 1.6; margin-bottom: 8px; }
+.point-quote { color: var(--c-text-2); font-size: 12.5px; font-style: italic; margin-bottom: 8px; }
 .point-acts { display: flex; gap: 14px; }
-.act-link { color: #555; font-size: 12.5px; cursor: pointer; text-decoration: underline; }
+.act-link { color: var(--c-text-2); font-size: 12.5px; cursor: pointer; text-decoration: underline; }
 .act-link:hover { color: #000; }
 
 .quiz-opts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
@@ -243,25 +243,12 @@ function saveAll() {
   border-radius: 6px;
   cursor: pointer;
 }
-.quiz-opt.selected { background: var(--r-ui, #f2f2f2); }
-.quiz-opt.right { background: #eef4e8; color: #4a7d3a; }
-.quiz-opt.wrong { background: #f9ece9; color: #b05a4a; }
-.quiz-feedback { font-size: 13px; color: #666; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.quiz-feedback b.ok { color: #4a7d3a; }
-.quiz-feedback b.bad { color: #b05a4a; }
-.quiz-score { text-align: center; font-size: 16px; font-weight: 600; color: #1a1a1a; padding: 10px 0; }
-
-.ghost-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: 1px solid var(--r-border, #ddd);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-size: 13px;
-  cursor: pointer;
-  color: #444;
-}
-.ghost-btn:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); }
-.ghost-btn.small { padding: 5px 10px; font-size: 12px; }
-.hint { color: #999; font-size: 13px; margin-top: 10px; }
+.quiz-opt.selected { background: var(--c-surface-2); }
+.quiz-opt.right { background: #eef4e8; color: var(--c-success); }
+.quiz-opt.wrong { background: #f9ece9; color: var(--c-danger); }
+.quiz-feedback { font-size: 13px; color: var(--c-text-2); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.quiz-feedback b.ok { color: var(--c-success); }
+.quiz-feedback b.bad { color: var(--c-danger); }
+.quiz-score { text-align: center; font-size: 16px; font-weight: 600; color: var(--c-text); padding: 10px 0; }
+.hint { color: var(--c-text-2); font-size: 13px; margin-top: 10px; }
 </style>

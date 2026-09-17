@@ -1,10 +1,9 @@
 <template>
   <div class="match-page">
     <header class="mg-head">
-      <button class="ghost-btn small" @click="quit">← 返回</button>
+      <BackLink label="返回" @back="quit" />
       <div class="mg-title">
         <h2>卡片消消乐</h2>
-        <p class="mg-sub">点单词，再点它的释义</p>
       </div>
       <span class="mg-scope">{{ scopeLabel }}</span>
     </header>
@@ -18,9 +17,7 @@
       <button class="ghost-btn small" :disabled="page >= pageCount - 1" @click="goPage(page + 1)">下一页 ›</button>
     </div>
 
-    <div v-if="!total" class="mg-empty">
-      这里没有可以配对的词。需要至少 2 个带释义的单词。
-    </div>
+    <div v-if="!total" class="mg-empty">暂无</div>
 
     <div v-else class="mg-grid">
       <button
@@ -363,10 +360,10 @@ watch(playOnPick, v => localStorage.setItem('lb-match-audio', v ? '1' : '0'))
 }
 .mg-head { display: flex; align-items: center; gap: 16px; }
 .mg-title h2 { font-size: 18px; margin: 0; }
-.mg-sub { font-size: 12.5px; color: var(--r-ink2, #9aa0a6); margin: 2px 0 0; }
-.mg-scope { margin-left: auto; font-size: 12.5px; color: var(--r-ink2, #9aa0a6); }
+.mg-sub { font-size: 12.5px; color: var(--c-text-2); margin: 2px 0 0; }
+.mg-scope { margin-left: auto; font-size: 12.5px; color: var(--c-text-2); }
 .mg-progress { text-align: center; font-size: 17px; font-weight: 600; }
-.mg-empty { text-align: center; color: var(--r-ink2, #9aa0a6); margin-top: 40px; }
+.mg-empty { text-align: center; color: var(--c-text-2); margin-top: 40px; }
 
 .mg-grid {
   display: grid;
@@ -379,8 +376,8 @@ watch(playOnPick, v => localStorage.setItem('lb-match-audio', v ? '1' : '0'))
   padding: 16px 14px;
   border: none;
   border-radius: 14px;
-  background: var(--r-ui, #f4f5f7);
-  color: var(--r-ink, #1f2328);
+  background: var(--c-surface-2);
+  color: var(--c-text);
   font-size: 15px;
   font-family: inherit;
   line-height: 1.45;
@@ -393,7 +390,7 @@ watch(playOnPick, v => localStorage.setItem('lb-match-audio', v ? '1' : '0'))
 
   &:hover:not(:disabled) { transform: translateY(-2px); }
   &.cn { background: var(--r-ui2, #eceff3); }
-  &.picked { outline: 2px solid var(--r-accent, #8a4b3a); }
+  &.picked { outline: 2px solid var(--c-accent); }
   &.right { background: #cdebd4; }
   &.wrong { background: #f3ccc8; }
   &.gone { opacity: 0; pointer-events: none; }
@@ -401,7 +398,7 @@ watch(playOnPick, v => localStorage.setItem('lb-match-audio', v ? '1' : '0'))
 .mg-dot {
   position: absolute; left: 10px; top: 10px;
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--r-accent, #b08968); opacity: .55;
+  background: var(--c-accent); opacity: .55;
 }
 .mg-text { max-height: 100%; overflow: hidden; }
 
@@ -415,17 +412,17 @@ watch(playOnPick, v => localStorage.setItem('lb-match-audio', v ? '1' : '0'))
   position: fixed; left: var(--lb-nav-w, 56px); right: 0; bottom: 0;
   display: flex; align-items: center; gap: 18px;
   padding: 12px 24px;
-  background: var(--r-bg, #fff);
+  background: var(--r-bg, var(--c-surface));
   border-top: 1px solid var(--r-line, #eceff3);
   font-size: 13px;
 }
 .mg-opt { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .mg-sel {
-  border: 1px solid var(--r-line, #e5e7eb); border-radius: 7px;
-  background: transparent; color: var(--r-ink, #1f2328);
+  border: 1px solid var(--r-line, var(--c-line)); border-radius: 7px;
+  background: transparent; color: var(--c-text);
   font-family: inherit; font-size: 13px; padding: 3px 6px;
 }
 .mg-bar { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 18px 0 14px; }
-.mg-page { display: block; font-size: 12.5px; font-weight: 400; color: var(--r-ink2, #9aa0a6); }
+.mg-page { display: block; font-size: 12.5px; font-weight: 400; color: var(--c-text-2); }
 .spacer { flex: 1; }
 </style>

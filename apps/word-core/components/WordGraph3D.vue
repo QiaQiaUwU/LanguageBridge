@@ -4,12 +4,22 @@
     <div v-if="loading" class="graph-loading">
       <span class="spinner"></span>正在算布局…
     </div>
-    <div v-if="drillLevel > 0" class="drill-bar">
-      <button class="drill-back" @click="drillOut">‹ 返回</button>
+    <div v-if="drillLevel > 0 || rootPath.length" class="drill-bar">
+      <BackLink label="返回" @back="drillLevel > 0 ? drillOut() : emit('crumb', rootPath.length - 2)" />
       <span class="drill-crumb">
-        <button class="crumb-item" @click="drillTo(0)">全部</button>
+        <button class="crumb-item" @click="rootPath.length ? emit('crumb', -1) : drillTo(0)">全部</button>
+        <template v-for="(p, i) in rootPath" :key="i">
+          <span class="crumb-sep">›</span>
+          <button
+            class="crumb-item"
+            :class="{ cur: drillLevel === 0 && i === rootPath.length - 1 }"
+            @click="i === rootPath.length - 1 ? drillTo(0) : emit('crumb', i)"
+          >{{ p }}</button>
+        </template>
+        <template v-if="drillLevel >= 1">
         <span class="crumb-sep">›</span>
         <button class="crumb-item" :class="{ cur: drillLevel === 1 }" @click="drillTo(1)">{{ drillSuper }}</button>
+        </template>
         <template v-if="drillLevel >= 2">
           <span class="crumb-sep">›</span>
           <button class="crumb-item" :class="{ cur: drillLevel === 2 }" @click="drillTo(2)">{{ drillCloud }}</button>
@@ -69,7 +79,10 @@ const props = withDefaults(defineProps<{
   nodeStyle?: 'glass' | 'planet'
   clusterInfo?: Record<string, string>
   loading?: boolean
+  /** 外层（话题树）已经钻到的路径，显示在面包屑前面 */
+  rootPath?: string[]
 }>(), {
+  rootPath: () => [],
   showLinks: true,
   clickMode: 'select',
   minLinkWeight: 0,
@@ -80,6 +93,8 @@ const emit = defineEmits<{
   (e: 'select', word: string): void
   (e: 'drill', d: { level: number; superCloud: string; cloud: string }): void
   (e: 'stats', s: { nodes: number; links: number }): void
+  /** 点了外层路径的第 i 级（-1 表示「全部」） */
+  (e: 'crumb', i: number): void
 }>()
 
 const themeStore = useThemeStore()
@@ -1743,7 +1758,7 @@ watch(() => props.nodeStyle, () => {
 <style scoped>
 
 /* 钻取面包屑：之前没有样式，几段文字挤在一起 */
-.drill-crumb { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--r-ink2, #9aa0a6); }
+.drill-crumb { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--c-text-2); }
 .graph-shell { position: relative; width: 100%; height: 100%; }
 .force-graph-canvas {
   width: 100%;

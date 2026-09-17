@@ -2,7 +2,7 @@
   <div class="universe-page">
     <header class="uni-head">
       <div class="head-left">
-        <button class="ghost-btn small" @click="$router.push('/home')">← 主页</button>
+        <BackLink label="主页" to="/home" />
         <h2 class="uni-title">词汇宇宙</h2>
         <span class="uni-count">
           {{ nodes.length }} 词 · {{ links.length }} 关系
@@ -15,12 +15,12 @@
           v-model="searchText"
           class="search-input"
           type="text"
-          placeholder="搜一个词，看它的关系网"
+          placeholder="搜索"
           @focus="searchFocus = true"
           @blur="onSearchBlur"
           @keydown.enter="commitSearchTop"
         />
-        <button v-if="centerWord" class="search-exit" title="回到筛选结果" @click="exitCenter">×</button>
+        <CloseButton v-if="centerWord" class="search-exit" title="回到筛选结果" @click="exitCenter" small />
         <div v-if="searchFocus && suggestions.length" class="search-drop">
           <button
             v-if="searchHits.length > suggestions.length"
@@ -45,21 +45,20 @@
     </header>
 
     <div class="uni-body">
-      <button
-        class="panel-toggle"
-        :class="{ folded: panelFolded }"
-        :title="panelFolded ? '展开设置面板' : '收起设置面板，把画布铺满'"
-        @click="panelFolded = !panelFolded"
-      >{{ panelFolded ? '›' : '‹' }}</button>
+      <aside v-show="!panelFolded" class="uni-panel" :style="{ width: panelWidth + 'px' }">
+        <div class="panel-resizer" title="拖动改宽度" @pointerdown="startPanelResize"></div>
+        <div class="panel-head">
+          <span class="panel-title">筛选</span>
+          <FoldToggle v-model:folded="panelFolded" :icons="['ri-filter-3-line', 'ri-arrow-left-double-line']" title="筛选面板" />
+        </div>
 
-      <aside v-show="!panelFolded" class="uni-panel">
         <div class="panel-block">
-          <p class="panel-label">节点着色</p>
-          <div class="mode-row">
-            <button class="mode-btn" :class="{ on: colorBy === 'exam' }" @click="colorBy = 'exam'">按考试</button>
-            <button class="mode-btn" :class="{ on: colorBy === 'topic' }" @click="colorBy = 'topic'">按话题</button>
-            <button class="mode-btn" :class="{ on: colorBy === 'morpheme' }" @click="colorBy = 'morpheme'">按词根</button>
-            <button class="mode-btn" :class="{ on: colorBy === 'mastery' }" @click="colorBy = 'mastery'">按掌握</button>
+          <p class="panel-label">着色</p>
+          <div class="seg fill">
+            <button :class="{ on: colorBy === 'exam' }" @click="colorBy = 'exam'">考试</button>
+            <button :class="{ on: colorBy === 'topic' }" @click="colorBy = 'topic'">话题</button>
+            <button :class="{ on: colorBy === 'morpheme' }" @click="colorBy = 'morpheme'">词根</button>
+            <button :class="{ on: colorBy === 'mastery' }" @click="colorBy = 'mastery'">掌握</button>
           </div>
         </div>
 
@@ -83,7 +82,7 @@
             <select v-model="bookId" class="mini-select full">
               <option value="">全部词库（{{ wordStore.words.length }}）</option>
               <option v-for="g in books" :key="g.id" :value="g.id">
-                {{ g.name }}（{{ g.wordIds.length }}）
+                {{ g.name }}（{{ wordStore.groupSize(g) }}）
               </option>
             </select>
           </div>
@@ -93,11 +92,10 @@
               <span class="panel-label">分类</span>
               <button v-if="sel[dim]" class="link-btn" @click="sel[dim] = ''">清除</button>
             </div>
-            <div class="mode-row">
+            <div class="seg fill">
               <button
                 v-for="d in dimensions"
                 :key="d.key"
-                class="mode-btn"
                 :class="{ on: dim === d.key, picked: !!sel[d.key] }"
                 :disabled="!d.count"
                 @click="pickDim(d.key)"
@@ -134,12 +132,11 @@
           </div>
 
           <div class="panel-block">
-            <p class="panel-label">掌握程度</p>
-            <div class="mode-row">
+            <p class="panel-label">掌握</p>
+            <div class="seg fill">
               <button
                 v-for="st in STATUS_FILTERS"
                 :key="st.key"
-                class="mode-btn"
                 :class="{ on: statusFilter === st.key }"
                 @click="statusFilter = st.key"
               >{{ st.label }}</button>
@@ -148,11 +145,10 @@
 
           <div class="panel-block">
             <p class="panel-label">关系</p>
-            <div class="mode-row">
+            <div class="seg fill">
               <button
                 v-for="r in REL_OPTIONS"
                 :key="r.key"
-                class="mode-btn"
                 :class="{ on: relTypes.includes(r.key) }"
                 @click="toggleRel(r.key)"
               >
@@ -178,18 +174,46 @@
 
           <div class="panel-block">
             <details class="manual-fold">
-              <summary class="panel-label">手动输入一批词</summary>
+              <summary class="panel-label">批量添加</summary>
               <textarea
                 v-model="manualText"
                 class="manual-input"
                 rows="6"
-                placeholder="一行或用逗号分隔"
+                placeholder="单词"
               ></textarea>
-              <p v-if="manualOverflow" class="warn">超出 {{ MANUAL_MAX }} 个，只取前面的部分</p>
+              <p v-if="manualOverflow" class="warn">超出 {{ MANUAL_MAX }} 个</p>
               <button class="ghost-btn small" :disabled="!manualText" @click="manualText = ''">清空</button>
             </details>
           </div>
         </template>
+
+        <div class="panel-block">
+          <div class="panel-label-row">
+            <span class="panel-label">话题</span>
+            <button class="ui-icon-btn sm" title="刷新" :disabled="treeBusy" @click="buildTree"><i class="ri-refresh-line"></i></button>
+          </div>
+          <span v-if="treeBusy" class="ui-spin"></span>
+          <EmptyState v-else-if="!topicNodes.length" />
+          <ul v-else class="tt">
+            <li
+              v-for="n in topicNodes"
+              :key="n.id"
+              class="tt-row"
+              :class="[`lv${Math.min(n.level, 5)}`, { cur: topicScope?.id === n.id }]"
+              :style="{ paddingLeft: (n.level - 1) * 10 + 'px' }"
+            >
+              <span v-if="expanding === n.id" class="tt-pad"><span class="ui-spin"></span></span>
+              <button v-else-if="n.children.length || n.pending" class="ui-icon-btn sm" :title="treeOpen.has(n.id) ? '收起' : '展开'" @click="toggleTree(n)">
+                <i :class="treeOpen.has(n.id) ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'"></i>
+              </button>
+              <span v-else class="tt-pad"></span>
+              <button class="tt-name" :class="{ stray: n.label === '零散' }" :title="n.words.slice(0, 20).join(' ') + (n.weak?.length ? `\n存疑：${n.weak.join(' ')}` : '')" @click="drillTopic(n)">{{ n.label }}</button>
+              <i v-if="n.weak?.length" class="ri-question-line tt-weak" :title="`存疑：${n.weak.join(' ')}`"></i>
+              <span class="tt-count">{{ n.words.length }}</span>
+              <button v-if="n.level >= 2 && n.words.length >= 2" class="ui-icon-btn sm" title="笔记" @click="openTopicNote(n)"><i class="ri-sticky-note-line"></i></button>
+            </li>
+          </ul>
+        </div>
 
         <div class="panel-block">
           <div class="panel-label-row">
@@ -204,6 +228,13 @@
       </aside>
 
       <div class="uni-graph">
+        <FoldToggle
+          v-if="panelFolded"
+          v-model:folded="panelFolded"
+          class="graph-unfold"
+          :icons="['ri-filter-3-line', 'ri-arrow-left-double-line']"
+          title="筛选面板"
+        />
         <WordGraph3D
           v-if="nodes.length"
           ref="graphRef"
@@ -211,19 +242,44 @@
           :links="links"
           :cluster-info="applied?.info"
           :loading="loadingGraph"
+          :root-path="topicScope && !centerWord ? topicPath.map(x => x.label) : []"
           @select="onSelect"
           @stats="drawn = $event"
+          @drill="onGraphDrill"
+          @crumb="onCrumb"
         />
-        <p v-else class="uni-empty">当前条件下没有可展示的单词</p>
+        <p v-else class="uni-empty">暂无</p>
       </div>
 
-      <aside v-if="detailWord" class="uni-detail">
+      <aside v-if="detailWord || noteTarget" class="uni-detail" :class="{ wide: detailTab === 'note' }">
+        <div class="ud-tabs">
+          <BackLink v-if="returnNote" label="笔记" @back="backToNote" />
+          <div v-if="detailWord" class="seg">
+            <button :class="{ on: detailTab === 'detail' }" @click="detailTab = 'detail'">详情</button>
+            <button :class="{ on: detailTab === 'note' }" @click="detailTab = 'note'">笔记</button>
+          </div>
+          <span v-else class="ud-title">笔记</span>
+          <CloseButton @click="closeDetail" />
+        </div>
         <WordDetailInline
+          v-if="detailTab === 'detail' && detailWord"
           :word="detailWord"
           inline
-          @close="detailWord = null"
+          @close="closeDetail"
           @search="onSelect"
           @filter-family="focusOn"
+        />
+        <FamilyNotePanel
+          v-else
+          class="ud-note"
+          :words="wordStore.words"
+          :word="noteTarget ? null : detailWord"
+          :members="noteTarget?.members"
+          :title="noteTarget?.title"
+          :preset="noteTarget?.preset"
+          :preset-layout="noteTarget?.layout"
+          :groups="noteTarget?.groups"
+          @pick="pickFromNote"
         />
       </aside>
     </div>
@@ -238,6 +294,11 @@ import WordGraph3D from '@/apps/word-core/components/WordGraph3D.vue'
 import type { GraphNode, GraphLink } from '@/apps/word-core/components/WordGraph3D.vue'
 import GraphLegend from '@/apps/word-core/components/GraphLegend.vue'
 import WordDetailInline from '@/apps/word-core/components/WordDetailModal.vue'
+import FamilyNotePanel from './components/FamilyNotePanel.vue'
+import { getIndex, topicTree, expandTopic } from '@/shared/core/familyNoteService'
+import { getStudyRecord } from '@/shared/core/studyRecords'
+import type { FamilyNote, TopicTreeNode } from '@/shared/core/wordFamily'
+import { useRoute } from 'vue-router'
 import { RELATION_WEIGHTS, type RelationType } from '@/apps/word-core/components/graphColors'
 import {
   detectCommunities, pickConstellations, filterConstellationLinks, membersPerCluster
@@ -263,6 +324,199 @@ const limitIdx = ref(LIMIT_STEPS.indexOf(300))
 const limit = computed(() => LIMIT_STEPS[limitIdx.value] ?? 300)
 const manualText = ref('')
 const detailWord = ref<WordItem | null>(null)
+
+/** 左侧面板宽度，可拖动，记住上次的值 */
+const PANEL_W_KEY = 'lb-universe-panel-w'
+const panelWidth = ref(Math.min(460, Math.max(260, Number(localStorage.getItem(PANEL_W_KEY)) || 320)))
+function startPanelResize(e: PointerEvent) {
+  const startX = e.clientX
+  const startW = panelWidth.value
+  const move = (ev: PointerEvent) => { panelWidth.value = Math.min(460, Math.max(260, startW + ev.clientX - startX)) }
+  const up = () => {
+    window.removeEventListener('pointermove', move)
+    localStorage.setItem(PANEL_W_KEY, String(panelWidth.value))
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up, { once: true })
+}
+
+/* ---------- 词汇笔记 ---------- */
+const route = useRoute()
+const detailTab = ref<'detail' | 'note'>('detail')
+const noteTarget = ref<{ members?: string[]; title?: string; preset?: FamilyNote; layout?: 'list' | 'radial'; groups?: { label: string; words: string[] }[] } | null>(null)
+/**
+ * 详情和笔记并存：
+ *   在星图或搜索里选词 → 看这个词的详情（例句、辨析都在），「笔记」页签是这个词的词族笔记；
+ *   在话题笔记里点一个词 → 切到这个词的详情，顶上有「返回笔记」回到刚才的话题笔记。
+ */
+const returnNote = ref<typeof noteTarget.value>(null)
+function closeDetail() {
+  detailWord.value = null
+  noteTarget.value = null
+  returnNote.value = null
+  detailTab.value = 'detail'
+}
+function pickFromNote(word: string) {
+  const hit = wordStore.words.find(x => x.word.toLowerCase() === word.toLowerCase())
+  if (!hit) return
+  if (noteTarget.value) returnNote.value = noteTarget.value
+  noteTarget.value = null
+  detailTab.value = 'detail'
+  focusOn(hit)
+}
+function backToNote() {
+  noteTarget.value = returnNote.value
+  returnNote.value = null
+  detailWord.value = null
+  detailTab.value = 'note'
+}
+
+const topicRoots = ref<TopicTreeNode[]>([])
+const treeOpen = ref(new Set<string>())
+const treeBusy = ref(false)
+async function buildTree() {
+  treeBusy.value = true
+  try {
+    const idx = await getIndex(wordStore.words)
+    topicRoots.value = topicTree(idx, scopedWords.value)
+    // 树重建后旧节点失效，退出话题钻取
+    if (topicScope.value) { topicScope.value = null; applyLoad() }
+  } finally {
+    treeBusy.value = false
+  }
+}
+const expanding = ref('')
+async function ensureExpanded(n: TopicTreeNode) {
+  if (!n.pending) return
+  expanding.value = n.id
+  try {
+    const idx = await getIndex(wordStore.words)
+    await expandTopic(idx, n)
+    topicRoots.value = [...topicRoots.value]
+  } finally {
+    expanding.value = ''
+  }
+}
+async function toggleTree(n: TopicTreeNode) {
+  const s = new Set(treeOpen.value)
+  if (s.has(n.id)) { s.delete(n.id); treeOpen.value = s; return }
+  await ensureExpanded(n)
+  s.add(n.id)
+  treeOpen.value = s
+}
+
+/* ---------- 按话题逐层钻取 ---------- */
+/**
+ * 话题树里点一层：星图换成这一层的词，下一层的各组显示成星云，再下一层是星云里的小团。
+ * 在星图里继续往下钻到第二级时，自动把那一组设成新的一层，所以没有层数限制。
+ */
+const topicScope = ref<TopicTreeNode | null>(null)
+const topicPath = computed<TopicTreeNode[]>(() => {
+  const n = topicScope.value
+  if (!n) return []
+  const walk = (list: TopicTreeNode[], trail: TopicTreeNode[]): TopicTreeNode[] | null => {
+    for (const x of list) {
+      const t = [...trail, x]
+      if (x === n) return t
+      const hit = walk(x.children, t)
+      if (hit) return hit
+    }
+    return null
+  }
+  return walk(topicRoots.value, []) || [n]
+})
+const realChildren = (n: TopicTreeNode) => n.children.filter(c => !c.id.includes('/@'))
+
+async function drillTopic(n: TopicTreeNode | null) {
+  if (centerWord.value) exitCenter()
+  if (n) {
+    await ensureExpanded(n)
+    for (const c of realChildren(n)) await ensureExpanded(c)
+    // 展开树，让当前层在左边可见
+    const s = new Set(treeOpen.value)
+    topicPath.value.forEach(x => s.add(x.id))
+    s.add(n.id)
+    treeOpen.value = s
+  }
+  topicScope.value = n
+  await applyLoad()
+  nextTick(() => graphRef.value?.restoreDrill?.({ level: 0, superCloud: '', cloud: '', cluster: '', clusterLabel: '' }))
+}
+function onCrumb(i: number) {
+  if (i < 0) { drillTopic(null); return }
+  const target = topicPath.value[i]
+  if (target) drillTopic(target)
+}
+function onGraphDrill(d: { level: number; superCloud: string; cloud: string }) {
+  if (d.level < 2) return
+  const base = topicScope.value
+  let next: TopicTreeNode | undefined
+  if (base) {
+    const child = realChildren(base).find(c => c.label === d.superCloud)
+    next = child && realChildren(child).find(c => c.label === d.cloud)
+    if (next && !realChildren(next).length && !next.pending) next = undefined
+  } else {
+    const l1 = topicRoots.value.find(x => x.label === d.superCloud)
+    next = l1?.children.find(x => x.label === d.cloud)
+  }
+  if (next) drillTopic(next)
+}
+/** 当前层下，词 → 所属下一层 / 再下一层的组名 */
+function scopeClouds(scope: TopicTreeNode, words: WordItem[]) {
+  const cloudOut = new Map<string, string>()
+  const superOut = new Map<string, string>()
+  const kids = realChildren(scope)
+  const find = (list: TopicTreeNode[], k: string) => list.find(c => c.words.includes(k))
+  for (const w of words) {
+    const k = w.word.toLowerCase()
+    const child = find(kids, k)
+    const grand = child ? find(realChildren(child), k) : undefined
+    superOut.set(w.word, child?.label || scope.label)
+    cloudOut.set(w.word, grand?.label || child?.label || scope.label)
+  }
+  return { cloudOf: cloudOut, superOf: superOut }
+}
+/** 展开后的扁平列表：L1 → L2 → L3（L4 词族太细，只在笔记里体现） */
+const topicNodes = computed(() => {
+  const out: TopicTreeNode[] = []
+  const walk = (n: TopicTreeNode) => {
+    out.push(n)
+    if (treeOpen.value.has(n.id)) n.children.forEach(walk)
+  }
+  topicRoots.value.forEach(walk)
+  return out
+})
+async function openTopicNote(n: TopicTreeNode) {
+  await ensureExpanded(n)
+  const path = pathOf(n)
+  // 主题下有小组时，笔记按小组分支，和树保持一致
+  const sub = n.children.filter(c => !c.id.includes('/@'))
+  const groups = sub.length >= 2 ? sub.map(c => ({ label: c.label, words: c.words })) : undefined
+  noteTarget.value = { members: n.words, title: path.slice(1).join(' · ') || n.label, groups }
+  detailWord.value = null
+  detailTab.value = 'note'
+}
+/** 从 L1 到这个节点的标签路径 */
+function pathOf(n: TopicTreeNode): string[] {
+  const walk = (list: TopicTreeNode[], trail: string[]): string[] | null => {
+    for (const x of list) {
+      const t = [...trail, x.label]
+      if (x === n) return t
+      const hit = walk(x.children, t)
+      if (hit) return hit
+    }
+    return null
+  }
+  return walk(topicRoots.value, []) || [n.label]
+}
+
+async function openSavedNote(id: string) {
+  const r = await getStudyRecord(id)
+  if (r && r.type === 'familyNote') {
+    noteTarget.value = { preset: r.note, layout: r.layout, title: r.title }
+    detailTab.value = 'note'
+  }
+}
 /**
  * 左侧设置面板收起没有。
  *
@@ -307,7 +561,7 @@ const expandDim = ref(false)
 
 const STATUS_FILTERS = [
   { key: 'all', label: '不限' },
-  { key: 'unmarked', label: '未标注' },
+  { key: 'unmarked', label: '未标' },
   { key: 'known', label: '认识' },
   { key: 'fuzzy', label: '模糊' },
   { key: 'unknown', label: '不认识' }
@@ -368,7 +622,7 @@ const morphemeValues = computed(() => collectDim('morpheme'))
 const dimensions = computed(() => [
   { key: 'exam' as DimKey, label: '考试', count: examValues.value.length },
   { key: 'topic' as DimKey, label: '话题', count: topicValues.value.length },
-  { key: 'morpheme' as DimKey, label: '词根词缀', count: morphemeValues.value.length }
+  { key: 'morpheme' as DimKey, label: '词根', count: morphemeValues.value.length }
 ])
 
 const dimValues = computed<DimValue[]>(() => {
@@ -578,8 +832,13 @@ const buildError = ref('')
 
 function buildApplied() {
   appliedTick.value = paramTick.value
-  const all = scopedWords.value
-  const n = Math.max(0, Math.min(limit.value, all.length))
+  const scope = topicScope.value
+  let all = scopedWords.value
+  if (scope) {
+    const want = new Set(scope.words)
+    all = wordStore.words.filter(w => want.has(w.word.toLowerCase()))
+  }
+  const n = scope ? Math.min(all.length, MAX_LIMIT) : Math.max(0, Math.min(limit.value, all.length))
   if (!n) { applied.value = null; return }
 
   const edges = relationEdges(all).filter(e => relTypes.value.includes(e.type as RelKey))
@@ -634,7 +893,7 @@ function buildApplied() {
     words, clusterOf: r.clusterOf, cores: r.cores, links,
     clusterCount: r.clusterCount, hidden: r.hidden,
     info: describeClusters(words, r.clusterOf),
-    ...cloudsOf(words, r.clusterOf)
+    ...(scope ? scopeClouds(scope, words) : cloudsOf(words, r.clusterOf))
   }
 }
 
@@ -848,11 +1107,15 @@ const graphSources = computed(() => {
 function onSelect(word: string) {
   const hit = wordStore.words.find(w => w.word.toLowerCase() === word.toLowerCase())
   if (!hit) return
+  // 正在看话题笔记时点星图，切到这个词的详情；正在看单词笔记则保持笔记页签，换成新词的笔记
+  if (noteTarget.value) { noteTarget.value = null; detailTab.value = 'detail' }
+  returnNote.value = null
   detailWord.value = hit
   focusOn(hit)
 }
 
 function clearGraph() {
+  if (topicScope.value) { drillTopic(null); return }
   if (centerWord.value) exitCenter()
   else if (manualText.value) manualText.value = ''
   else if (activeFilters.value.length) clearAllFilters()
@@ -881,6 +1144,9 @@ watch(() => wordStore.words.length, () => {
   if (!applied.value || !applied.value.words.length) applyLoad()
   else paramTick.value++
 })
+
+watch(() => route.query.note, v => { if (v) openSavedNote(String(v)) }, { immediate: true })
+watch(() => scopedWords.value.length, n => { if (n) buildTree() }, { immediate: true })
 
 onMounted(async () => {
   try { await wordStore.loadWords() } catch (e) { console.error('[词汇宇宙] 词库加载失败', e); buildError.value = '词库加载失败：' + (e instanceof Error ? e.message : String(e)) }
@@ -927,7 +1193,13 @@ watch(
 </script>
 
 <style scoped lang="scss">
-.universe-page { height: calc(100vh - var(--lb-main-pad, 24px) * 2); display: flex; flex-direction: column; padding: 8px 10px 10px; }
+.universe-page {
+  height: calc(100vh - var(--lb-main-pad, 24px) * 2);
+  display: flex; flex-direction: column;
+  /* 主区域已经有 24px 内边距，这里不再叠加，左侧面板贴近导航栏 */
+  padding: 0 0 var(--space-xs);
+  margin-left: calc(var(--space-xs) - var(--lb-main-pad, 24px));
+}
 
 .uni-head {
   display: grid; grid-template-columns: 1fr auto 1fr;
@@ -936,7 +1208,7 @@ watch(
 .head-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .head-right { min-width: 0; }
 .uni-title { font-size: 17px; margin: 0; white-space: nowrap; }
-.uni-count { font-size: 12.5px; color: var(--r-ink2, #999); white-space: nowrap; }
+.uni-count { font-size: 12.5px; color: var(--c-text-2); white-space: nowrap; }
 .uni-legend { margin-bottom: 10px; }
 
 .head-search {
@@ -947,29 +1219,29 @@ watch(
 }
 .search-input {
   width: 100%;
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 9999px;
   padding: 7px 34px 7px 14px;
   font-size: 13.5px;
-  background: var(--r-paper, #fff);
+  background: var(--c-surface);
   color: inherit;
   outline: none;
   transition: border-color 0.15s;
 }
-.head-search.focus .search-input { border-color: var(--r-accent, #8a4b3a); }
+.head-search.focus .search-input { border-color: var(--c-accent); }
 .search-exit {
   position: absolute; right: 10px;
   border: none; background: none; cursor: pointer;
-  font-size: 17px; line-height: 1; color: var(--r-ink2, #999);
+  font-size: 17px; line-height: 1; color: var(--c-text-2);
 }
-.search-exit:hover { color: var(--r-ink, #333); }
+.search-exit:hover { color: var(--c-text); }
 .search-drop {
   position: absolute;
   top: calc(100% + 4px);
   left: 0; right: 0;
   z-index: 40;
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e4e4e4);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   overflow: hidden;
@@ -978,21 +1250,16 @@ watch(
   display: flex; align-items: baseline; gap: 8px; width: 100%;
   padding: 7px 12px; border: none; background: none; cursor: pointer; text-align: left;
 }
-.search-item:hover { background: var(--r-ui, #f5f5f5); }
-.si-word { font-size: 13.5px; font-weight: 600; color: var(--r-ink, #222); }
-.si-zh { font-size: 12px; color: var(--r-ink2, #999); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-item:hover { background: var(--c-surface-2); }
+.si-word { font-size: 13.5px; font-weight: 600; color: var(--c-text); }
+.si-zh { font-size: 12px; color: var(--c-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .uni-body { flex: 1; min-height: 0; display: flex; gap: 12px; position: relative; }
-.panel-toggle {
-  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
-  z-index: 5; width: 14px; height: 54px; padding: 0;
-  border: 1px solid var(--r-border, #e5e7eb); border-left: none;
-  border-radius: 0 7px 7px 0; background: var(--r-ui, #f4f5f7);
-  color: var(--r-ink2, #8a9099); cursor: pointer; font-size: 12px; line-height: 1;
-  &:hover { color: var(--r-accent, #e8622a); }
-  &.folded { left: 0; }
+.graph-unfold {
+  position: absolute; left: var(--space-sm); top: var(--space-sm); z-index: 5;
+  background: rgba(16, 18, 24, .55); color: rgba(232, 234, 240, .9);
+  &:hover { color: var(--c-text-on-accent); background: rgba(16, 18, 24, .8); }
 }
-.uni-panel { margin-left: 14px; }
 .uni-body > .graph-3d, .uni-body > :last-child { min-width: 0; }
 .uni-legend {
   position: absolute; left: 12px; bottom: 12px; z-index: 4;
@@ -1001,96 +1268,128 @@ watch(
   color: #e8eaf0; pointer-events: none;
 }
 .uni-panel {
-  width: 268px;
+  position: relative;
   flex-shrink: 0;
   overflow-y: auto;
-  border: 1px solid var(--r-border, #e4e4e4);
-  border-radius: 12px;
-  padding: 14px;
-  background: var(--r-paper, #fff);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-xl);
+  padding: var(--space-sm);
+  background: var(--c-surface);
 }
-.panel-block { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--r-border, #f0f0f0); }
+.panel-resizer {
+  position: absolute; top: 0; right: -4px; bottom: 0; width: 8px; cursor: col-resize; z-index: 2;
+}
+.panel-resizer:hover { background: linear-gradient(90deg, transparent 3px, var(--c-accent-soft) 3px, var(--c-accent-soft) 5px, transparent 5px); }
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: calc(-1 * var(--space-2xs)) 0 var(--space-xs);
+}
+.panel-title { font-size: var(--text-sm); font-weight: 600; color: var(--c-text); }
+.panel-block { padding-bottom: var(--space-sm); margin-bottom: var(--space-sm); border-bottom: 1px solid var(--c-line-soft); }
 .panel-block:last-child { border-bottom: none; margin-bottom: 0; }
-.panel-label { font-size: 12.5px; color: var(--r-ink2, #888); margin: 0 0 8px; }
-.panel-big { font-size: 26px; font-weight: 600; margin: 0 0 6px; color: var(--r-accent, #8a4b3a); }
-.panel-big em { font-size: 13px; font-style: normal; margin-left: 5px; color: var(--r-ink2, #999); }
-.panel-hint { font-size: 12px; color: var(--r-ink2, #999); line-height: 1.6; margin: 0 0 12px; }
+.panel-label { font-size: var(--text-xs); color: var(--c-text-3); margin: 0 0 var(--space-xs); }
+.uni-panel .seg.fill > button { font-size: var(--text-xs); }
+.panel-big { font-size: var(--text-xl); font-weight: 600; margin: 0 0 var(--space-2xs); color: var(--c-accent); }
+.panel-big em { font-size: 13px; font-style: normal; margin-left: 5px; color: var(--c-text-2); }
+.panel-hint { font-size: 12px; color: var(--c-text-2); line-height: 1.6; margin: 0 0 12px; }
 .mode-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.mode-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  padding: 5px 10px; border-radius: 8px; font-size: 12.5px; cursor: pointer;
-  border: 1px solid var(--r-border, #ddd); background: transparent; color: inherit;
-}
-.mode-btn.on { background: var(--r-accent, #8a4b3a); color: var(--r-paper, #fff); border-color: transparent; }
-.mode-btn:disabled { opacity: 0.35; cursor: default; }
 .dim-count { font-size: 11px; margin-left: 4px; opacity: 0.7; }
-.val-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; max-height: 220px; overflow-y: auto; }
+.val-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: var(--space-xs); max-height: 168px; overflow-y: auto; }
 .val-chip {
   transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 9px; border-radius: 9999px; font-size: 12.5px; cursor: pointer;
-  border: 1px solid var(--r-border, #e6e6e6); background: transparent; color: inherit;
+  padding: 2px 8px; border-radius: 9999px; font-size: var(--text-xs); cursor: pointer;
+  border: 1px solid var(--c-line); background: transparent; color: inherit;
 }
-.val-chip.on { border-color: var(--r-accent, #8a4b3a); background: var(--r-ui, #f6f6f6); }
-.val-chip.ghost { color: var(--r-accent, #8a4b3a); border-style: dashed; }
+.val-chip.on { border-color: var(--c-accent); background: var(--c-surface-2); }
+.val-chip.ghost { color: var(--c-accent); border-style: dashed; }
 .val-chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.val-count { font-size: 11px; color: var(--r-ink2, #aaa); }
+.val-count { font-size: 11px; color: var(--c-text-2); }
 .slider { width: 100%; margin-bottom: 10px; }
 .dark-btn {
   width: 100%;
   border: none;
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
   border-radius: 9px;
   padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;
   transition: background-color .15s ease, box-shadow .15s ease;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
 }
-.dark-btn:disabled { background: var(--r-ui, #eee); color: var(--r-ink2, #999); box-shadow: none; cursor: default; }
+.dark-btn:disabled { background: var(--c-surface-2); color: var(--c-text-2); box-shadow: none; cursor: default; }
 .panel-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .link-btn {
   border: none; background: none; padding: 0; cursor: pointer;
-  font-size: 12px; color: var(--r-accent, #8a4b3a);
+  font-size: 12px; color: var(--c-accent);
 }
 .link-btn:disabled { opacity: 0.4; cursor: default; }
-.center-block { background: var(--r-ui, #faf7f5); border-radius: 10px; padding: 12px; }
-.center-word { font-size: 22px; font-weight: 600; margin: 0 0 4px; color: var(--r-accent, #8a4b3a); }
+.center-block { background: var(--c-surface-2); border-radius: 10px; padding: 12px; }
+.center-word { font-size: 22px; font-weight: 600; margin: 0 0 4px; color: var(--c-accent); }
 .manual-fold summary { cursor: pointer; }
 .density-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .mini-select {
   transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
   flex: 1; min-width: 0;
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px;
-  padding: 4px 7px; font-size: 12.5px; background: var(--r-paper, #fff); color: inherit;
+  border: 1px solid var(--c-line); border-radius: 8px;
+  padding: 4px 7px; font-size: 12.5px; background: var(--c-surface); color: inherit;
 }
 .mini-select.full { width: 100%; }
-.check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--r-ink2, #777); cursor: pointer; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--c-text-2); cursor: pointer; }
 .manual-input {
   width: 100%; margin-top: 8px;
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px;
-  padding: 8px; font-size: 13px; background: var(--r-ui, #fafafa); color: inherit; resize: vertical;
+  border: 1px solid var(--c-line); border-radius: 8px;
+  padding: 8px; font-size: 13px; background: var(--c-surface-2); color: inherit; resize: vertical;
 }
-.warn { font-size: 12px; color: #d9822b; margin: 6px 0 0; }
+.warn { font-size: 12px; color: var(--c-warn); margin: 6px 0 0; }
 .loaded-chips { display: flex; flex-wrap: wrap; gap: 4px; max-height: 150px; overflow-y: auto; }
-.loaded-chip { font-size: 11.5px; padding: 2px 7px; border-radius: 9999px; background: var(--r-ui, #f2f2f2); color: var(--r-ink2, #777); }
+.loaded-chip { font-size: 11.5px; padding: 2px 7px; border-radius: 9999px; background: var(--c-surface-2); color: var(--c-text-2); }
 .loaded-chip.more { opacity: 0.6; }
+.ud-tabs {
+  position: sticky; top: 0; z-index: var(--z-content);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-xs) var(--space-sm); background: var(--c-surface); border-bottom: 1px solid var(--c-line-soft);
+}
+.ud-note { height: calc(100% - 45px); }
+.ud-title { flex: 1; font-weight: 600; font-size: var(--text-sm); }
+.ud-tabs .seg { margin-right: auto; }
+.uni-detail.wide { width: 520px; display: flex; flex-direction: column; overflow: hidden; }
+.tt { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.tt-row { display: flex; align-items: center; gap: 2px; }
+.tt-pad { width: 26px; flex-shrink: 0; }
+.tt-name {
+  flex: 1; min-width: 0; border: none; background: none; cursor: pointer; text-align: left;
+  padding: 3px 4px; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-sm); color: var(--c-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tt-name:hover { background: var(--c-hover); }
+.tt-row.lv1 .tt-name { font-weight: 600; }
+.tt-row.lv3 .tt-name { color: var(--c-text); }
+.tt-row.cur .tt-name { background: var(--c-accent-soft); color: var(--c-accent); font-weight: 600; }
+.tt-pad { display: inline-flex; align-items: center; justify-content: center; height: 26px; }
+.tt-row.lv4 .tt-name, .tt-row.lv5 .tt-name { color: var(--c-text-2); font-size: var(--text-xs); }
+.tt { max-height: 46vh; }
+.tt-count { font-size: var(--text-2xs); color: var(--c-text-3); }
+.tt-weak { font-size: var(--icon-sm); color: var(--c-warn); }
+.tt-name.stray { font-style: italic; color: var(--c-text-3); }
+.tt-row .ui-icon-btn:last-child { opacity: 0; }
+.tt-row:hover .ui-icon-btn:last-child { opacity: 1; }
 .uni-detail {
   width: 380px;
   flex-shrink: 0;
   overflow-y: auto;
   position: relative;
-  border: 1px solid var(--r-border, #e4e4e4);
+  border: 1px solid var(--c-line);
   border-radius: 12px;
-  background: var(--r-paper, #fff);
+  background: var(--c-surface);
 }
 
 .uni-graph {
   flex: 1;
   min-width: 0;
   position: relative;
-  border: 1px solid var(--r-border, #e4e4e4);
+  border: 1px solid var(--c-line);
   border-radius: 12px;
   overflow: hidden;
   background: #050510;
@@ -1101,7 +1400,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--r-ink2, #aaa);
+  color: var(--c-text-2);
   font-size: 13px;
   margin: 0;
 }
@@ -1120,18 +1419,19 @@ watch(
 
 @media (max-width: 900px) {
   .uni-body { flex-direction: column; }
-  .uni-panel { width: auto; max-height: 260px; }
+  .uni-panel { width: auto !important; max-height: 260px; }
+  .panel-resizer { display: none; }
   .uni-graph { min-height: 340px; }
   .uni-head { flex-wrap: wrap; }
   .head-search { width: 100%; order: 3; }
 }
-.mode-btn.picked { border-color: var(--r-accent, #8a4b3a); }
+.mode-btn.picked { border-color: var(--c-accent); }
 .active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 10px; }
-.af-label { font-size: 11.5px; color: var(--r-ink2, #aaa); }
+.af-label { font-size: 11.5px; color: var(--c-text-2); }
 .af-chip {
-  border: 1px solid var(--r-accent, #8a4b3a); background: var(--r-ui, #f6f6f6);
-  color: var(--r-accent, #8a4b3a); border-radius: 9999px;
+  border: 1px solid var(--c-accent); background: var(--c-surface-2);
+  color: var(--c-accent); border-radius: 9999px;
   padding: 3px 9px; font-size: 12px; cursor: pointer;
 }
-.af-clear { border: none; background: none; cursor: pointer; font-size: 12px; color: var(--r-ink2, #999); }
+.af-clear { border: none; background: none; cursor: pointer; font-size: 12px; color: var(--c-text-2); }
 </style>

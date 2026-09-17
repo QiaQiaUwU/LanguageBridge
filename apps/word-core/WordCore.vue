@@ -1,6 +1,26 @@
 <template>
   <div class="word-core">
-    <div class="library-row">
+    <div class="search-row">
+      <div class="search-box">
+        <input
+          v-model="wordStore.searchQuery"
+          class="word-search"
+          placeholder="搜索"
+        />
+        <CloseButton v-if="wordStore.searchQuery" class="search-clear" @click="wordStore.searchQuery = ''" small />
+      </div>
+      <span v-if="wordStore.searchQuery" class="search-count">找到 {{ filteredWords.length }} 个</span>
+    </div>
+
+    <div
+      ref="libRowEl"
+      class="library-row"
+      :class="{ 'fade-l': libFade.left, 'fade-r': libFade.right, dragging: libDragging }"
+      @wheel="onLibWheel"
+      @pointerdown="onLibPointerDown"
+      @scroll.passive="updateLibFade"
+      @click.capture="onLibClickCapture"
+    >
       <button
         class="library-card"
         :class="{ on: currentGroupId === 'all' }"
@@ -16,26 +36,14 @@
         :class="{ on: currentBookId === g.id }"
         @click="selectBook(g.id)"
       >
-        <span class="library-name">{{ g.name }}</span>
-        <span class="library-count">{{ g.wordIds.length }}</span>
-        <span class="library-edit" title="编辑这本词书" @click.stop="editingBookId = g.id">✎</span>
+        <span class="library-name" :title="g.name">{{ g.name }}</span>
+        <span class="library-count">{{ wordStore.groupSize(g) }}</span>
+        <span class="library-edit" title="编辑" @click.stop="editingBookId = g.id">✎</span>
         <span class="library-del" @click.stop="doDeleteGroup(g)">×</span>
       </button>
-      <button class="library-card library-new" @click="showImport = true">
-        <span class="library-name">+ 新建 / 导入词库</span>
+      <button class="library-card library-new" title="新建 / 导入词库" @click="showImport = true">
+        <span class="library-name">＋</span>
       </button>
-    </div>
-
-    <div class="search-row">
-      <div class="search-box">
-        <input
-          v-model="wordStore.searchQuery"
-          class="word-search"
-          placeholder="搜索单词或释义"
-        />
-        <button v-if="wordStore.searchQuery" class="search-clear" @click="wordStore.searchQuery = ''">×</button>
-      </div>
-      <span v-if="wordStore.searchQuery" class="search-count">找到 {{ filteredWords.length }} 个</span>
     </div>
 
     <div v-if="currentBookId && currentChapters.length" class="filter-row chapter-row">
@@ -47,7 +55,7 @@
         class="chip small"
         :class="{ on: currentGroupId === c.id }"
         @click="currentGroupId = c.id; currentPage = 1"
-      >{{ c.name }}<span class="chip-count">{{ c.wordIds.length }}</span></button>
+      >{{ c.name }}<span class="chip-count">{{ wordStore.groupSize(c) }}</span></button>
     </div>
 
     <div v-if="hasAnyDimension" class="dimension-block">
@@ -101,11 +109,8 @@
       </div>
 
       <div v-if="dimManage" class="manage-bar">
-        <span class="manage-hint">
-          点一个分类，它后面会出现改名和删除。改名全库生效，删除只去掉这个分类、不会删词。
-        </span>
         <span v-if="activeDim === 'exam' && canonicalizable" class="manage-fix">
-          有 {{ canonicalizable }} 个词的考纲写法不统一（CET-4 / CET4 这种），会被当成两个分类。
+          考纲写法不统一 {{ canonicalizable }} 词
           <button class="dark-btn small" :disabled="tidying" @click="unifyExamTags">统一写法</button>
         </span>
         <span v-if="manageMsg" class="manage-msg">{{ manageMsg }}</span>
@@ -126,7 +131,7 @@
       <div v-if="activeFilters.length" class="dim-action">
         <span class="dim-hint">已筛出 {{ filteredWords.length }} 个词</span>
         <button class="dark-btn small" :disabled="!filteredWords.length" @click="studyFiltered">
-          加入学习规划
+          加入规划
         </button>
         <button class="ghost-btn small" :disabled="!filteredWords.length" @click="saveFilteredAsBook">
           存为词表
@@ -181,10 +186,10 @@
         <button class="ghost-btn small" :disabled="!selectedIds.size" @click="clearSelection">清空</button>
         <span class="sel-count">已选 {{ selectedIds.size }} 个</span>
         <button class="dark-btn small" :disabled="!selectedIds.size" @click="studySelected">
-          加入学习（{{ selectedIds.size }}）
+          学习（{{ selectedIds.size }}）
         </button>
         <button class="ghost-btn small" :disabled="!selectedIds.size" @click="saveSelectionAsBook">
-          存为新词表
+          存为词表
         </button>
       </template>
     </div>
@@ -207,7 +212,7 @@
         />
       </div>
     </div>
-    <p v-if="!filteredWords.length" class="empty-hint">当前筛选下没有单词。可点右上角「+ 新建 / 导入词库」导入。</p>
+    <p v-if="!filteredWords.length" class="empty-hint">暂无</p>
 
     <div class="pagination" v-if="totalPages > 1 || filteredWords.length">
       <button class="page-btn" :disabled="currentPage === 1" @click="currentPage--">上一页</button>
@@ -223,13 +228,12 @@
 
     <div v-if="showImport" class="import-mask" @click.self="showImport = false">
     <section class="import-box">
-      <button class="import-close" title="关闭" @click="showImport = false">×</button>
+      <CloseButton class="import-close" title="关闭" @click="showImport = false" />
       <div class="import-head">
         <h3>导入词书</h3>
-        <p>支持 TXT / CSV / JSON / MD / DOCX / PDF，格式如 <code>word;中文</code>。PDF/DOCX 分栏排版可能错乱，建议用 TXT。</p>
       </div>
       <div class="import-form">
-        <input v-model="importGroupName" class="group-name-input" placeholder="词书名称（留空则用文件名）" />
+        <input v-model="importGroupName" class="group-name-input" placeholder="名称" />
         <label
           class="drop-zone"
           :class="{ over: dragOver }"
@@ -237,20 +241,11 @@
           @dragleave="dragOver = false"
           @drop.prevent="onDrop"
         >
-          {{ importing ? '正在解析文件…' : '选择文件或拖拽到此处' }}
+          {{ importing ? '解析中…' : '选择文件' }}
           <input type="file" :accept="SUPPORTED_IMPORT_EXTS" hidden @change="onFilePick" />
         </label>
       </div>
       <p v-if="importMessage" class="import-msg">{{ importMessage }}</p>
-
-      <div class="lib-import-box">
-        <div class="lib-row">
-          <button class="ghost-btn small" :disabled="dedupingWords" @click="doDedupeWords">
-            {{ dedupingWords ? '清理中…' : '清理重复词条' }}
-          </button>
-        </div>
-        <p v-if="dedupeMessage" class="import-msg">{{ dedupeMessage }}</p>
-      </div>
     </section>
     </div>
 
@@ -291,11 +286,11 @@
           <template v-else>词汇宇宙 · {{ currentGroupLabel }}（{{ graphNodes.length }} 词）</template>
         </span>
         <div class="universe-actions">
-          <button v-if="graphCenter" class="universe-icon-btn" title="回到当前筛选结果" @click="graphCenter = null">← 全部</button>
+          <BackLink v-if="graphCenter" title="回到当前筛选结果" label="全部" @back="graphCenter = null" />
           <button class="universe-icon-btn" :title="universeFullscreen ? '收起为侧边' : '展开占满整页'" @click="universeFullscreen = !universeFullscreen">
             {{ universeFullscreen ? '⤡ 收起' : '⤢ 展开' }}
           </button>
-          <button class="universe-icon-btn" title="关闭" @click="universeOpen = false">×</button>
+          <CloseButton class="universe-icon-btn" title="关闭" @click="universeOpen = false" small />
         </div>
       </div>
       <GraphLegend
@@ -306,7 +301,7 @@
       />
       <div class="universe-graph">
         <WordGraph3D :nodes="graphNodes" :links="graphLinks" @select="onSelectGraphWord" />
-        <p v-if="!graphNodes.length" class="universe-empty">当前筛选下没有可展示的语义关系</p>
+        <p v-if="!graphNodes.length" class="universe-empty">暂无</p>
         <div v-if="graphNodes.length" class="universe-stats">
           <span class="stat-badge">{{ graphNodes.length }} 单词</span>
           <span class="stat-badge">{{ graphLinks.length }} 关系</span>
@@ -317,7 +312,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import type { GraphNode, GraphLink } from './components/WordGraph3D.vue'
 const WordGraph3D = defineAsyncComponent(() => import('./components/WordGraph3D.vue'))
@@ -392,10 +387,89 @@ const topLevelBooks = computed(() =>
       g.id.startsWith('book-') &&
       !g.parentId &&
       g.id !== LIBRARY_BOOK_ID &&
-      g.wordIds.length < wordStore.words.length
+      wordStore.groupSize(g) < wordStore.words.length
   )
 )
 const editingBookId = ref<string | null>(null)
+
+/* ---------- 词库横条：滚轮横滚、按住拖动 ---------- */
+const libRowEl = ref<HTMLElement | null>(null)
+const libFade = ref({ left: false, right: false })
+const libDrag = { active: false, moved: false, startX: 0, startLeft: 0 }
+const libDragging = ref(false)
+
+function updateLibFade() {
+  const el = libRowEl.value
+  if (!el) return
+  libFade.value = {
+    left: el.scrollLeft > 2,
+    right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2
+  }
+}
+function onLibWheel(e: WheelEvent) {
+  const el = libRowEl.value
+  if (!el || el.scrollWidth <= el.clientWidth) return
+  // 触控板本来就有横向分量，只接管纯竖向滚轮
+  if (Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return
+  const before = el.scrollLeft
+  el.scrollLeft += e.deltaY
+  // 滚到头了就把滚轮还给页面，不然整页卡住滚不动
+  if (el.scrollLeft !== before) e.preventDefault()
+}
+function onLibPointerDown(e: PointerEvent) {
+  const el = libRowEl.value
+  if (!el || e.button !== 0 || e.pointerType !== 'mouse') return   // 触屏走原生滑动
+  libDrag.active = true
+  libDrag.moved = false
+  libDrag.startX = e.clientX
+  libDrag.startLeft = el.scrollLeft
+  window.addEventListener('pointermove', onLibPointerMove)
+  window.addEventListener('pointerup', onLibPointerUp, { once: true })
+}
+function onLibPointerMove(e: PointerEvent) {
+  const el = libRowEl.value
+  if (!libDrag.active || !el) return
+  const dx = e.clientX - libDrag.startX
+  if (!libDrag.moved && Math.abs(dx) < 5) return   // 小抖动仍算点击
+  libDrag.moved = true
+  libDragging.value = true
+  el.scrollLeft = libDrag.startLeft - dx
+}
+function onLibPointerUp() {
+  libDrag.active = false
+  window.removeEventListener('pointermove', onLibPointerMove)
+  // 拖动结束那一下的 click 由 onLibClickCapture 吃掉，之后再复位
+  setTimeout(() => { libDrag.moved = false; libDragging.value = false }, 0)
+}
+function onLibClickCapture(e: MouseEvent) {
+  if (libDrag.moved) { e.stopPropagation(); e.preventDefault() }
+}
+function revealActiveLib() {
+  nextTick(() => {
+    const el = libRowEl.value
+    const on = el?.querySelector<HTMLElement>('.library-card.on')
+    if (el && on) {
+      const l = on.offsetLeft - el.offsetLeft
+      if (l < el.scrollLeft || l + on.offsetWidth > el.scrollLeft + el.clientWidth) {
+        el.scrollTo({ left: Math.max(0, l - 24), behavior: 'smooth' })
+      }
+    }
+    updateLibFade()
+  })
+}
+let libResize: ResizeObserver | null = null
+onMounted(() => {
+  if (libRowEl.value && typeof ResizeObserver !== 'undefined') {
+    libResize = new ResizeObserver(updateLibFade)
+    libResize.observe(libRowEl.value)
+  }
+  revealActiveLib()
+})
+onUnmounted(() => {
+  libResize?.disconnect()
+  window.removeEventListener('pointermove', onLibPointerMove)
+})
+watch(() => topLevelBooks.value.length, revealActiveLib)
 
 const currentBookId = computed<string | null>(() => {
   const cur = wordStore.groups.find(g => g.id === currentGroupId.value)
@@ -1060,20 +1134,6 @@ const importMessage = ref('')
 const dragOver = ref(false)
 const importing = ref(false)
 const enrichProgress = computed(() => wordStore.enrichProgress)
-const dedupingWords = ref(false)
-const dedupeMessage = ref('')
-async function doDedupeWords() {
-  dedupingWords.value = true
-  dedupeMessage.value = ''
-  try {
-    const r = await wordStore.dedupeWords()
-    dedupeMessage.value = r.merged
-      ? `清理完成：合并了 ${r.merged} 个重复词条，修正了 ${r.groupsFixed} 个词书里的重复引用`
-      : '没有发现重复词条'
-  } finally {
-    dedupingWords.value = false
-  }
-}
 
 async function doImport(file: File) {
   importing.value = true
@@ -1118,7 +1178,6 @@ onMounted(async () => {
 <style lang="scss" scoped>
 
 /* 这几个类之前一直没有样式 —— 全项扫描时才发现 */
-.manage-hint { font-size: 12px; color: var(--r-ink2, #9aa0a6); line-height: 1.6; }
 .cards { display: block; width: 100%; }
 .word-core {
   max-width: 1440px;
@@ -1128,14 +1187,38 @@ onMounted(async () => {
 
 .library-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 10px;
   margin-bottom: 18px;
+  padding: 2px 2px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  user-select: none;
+  /* 滚动条平时透明、悬停才显示；占位不变，出现时不跳动 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color var(--dur-base);
+  &:hover { scrollbar-color: var(--c-text-3) transparent; }
+  /* 不支持 scrollbar-color 的旧内核 */
+  &::-webkit-scrollbar { height: 6px; }
+  &::-webkit-scrollbar-track { background: transparent; }
+  &::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+  &:hover::-webkit-scrollbar-thumb { background: var(--c-text-3); }
+  --fade: 36px;
+  &.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, black var(--fade)); mask-image: linear-gradient(to right, transparent, black var(--fade)); }
+  &.fade-r { -webkit-mask-image: linear-gradient(to left, transparent, black var(--fade)); mask-image: linear-gradient(to left, transparent, black var(--fade)); }
+  &.fade-l.fade-r {
+    -webkit-mask-image: linear-gradient(to right, transparent, black var(--fade), black calc(100% - var(--fade)), transparent);
+    mask-image: linear-gradient(to right, transparent, black var(--fade), black calc(100% - var(--fade)), transparent);
+  }
+  &.dragging, &.dragging .library-card { cursor: grabbing; }
 }
 .library-card {
   position: relative;
-  border: 1px solid #e6e6e6;
-  background: #fff;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  border: 1px solid var(--c-line);
+  background: var(--c-surface);
   border-radius: 12px;
   padding: 12px 18px;
   min-width: 120px;
@@ -1144,12 +1227,15 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  &:hover { border-color: #ccc; background: #fafafa; }
-  &.on { background: var(--r-accent, #8a4b3a); border-color: transparent; .library-name, .library-count { color: #fff; } }
+  &:hover { border-color: var(--c-line); background: var(--c-surface-2); }
+  &.on { background: var(--c-accent); border-color: transparent; .library-name, .library-count { color: var(--c-text-on-accent); } }
 }
-.library-name { font-size: 14.5px; font-weight: 600; color: var(--r-ink, #1c1c1c); }
-.library-count { font-size: 12px; color: #999; }
+.library-name { font-size: 14.5px; font-weight: 600; color: var(--c-text); }
+.library-count { font-size: 12px; color: var(--c-text-2); }
 .library-card { padding-right: 18px; }
+/* 悬停时右上角有 ✎ ×，给它们留位置；名字太长就截断 */
+.library-card:has(.library-edit) { padding-right: 50px; }
+.library-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .library-edit, .library-del {
   position: absolute;
   top: 6px;
@@ -1162,23 +1248,24 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e0e0e0);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   transition: opacity 0.12s;
 }
 .library-card:hover .library-edit,
 .library-card:hover .library-del { opacity: 0.85; }
 .library-edit:hover, .library-del:hover { opacity: 1 !important; }
-.library-del:hover { color: #c0492b; border-color: #e0b4aa; }
+.library-del:hover { color: var(--c-danger); border-color: #e0b4aa; }
 .library-edit { right: 26px; }
 .library-del { right: 4px; }
 .library-new {
+  min-width: 64px;
   border-style: dashed;
-  color: #888;
+  color: var(--c-text-2);
   justify-content: center;
   align-items: center;
-  .library-name { color: #888; font-weight: 500; }
-  &:hover { border-color: transparent; .library-name { color: var(--r-ink, #1c1c1c); } }
+  .library-name { color: var(--c-text-2); font-weight: 500; }
+  &:hover { border-color: transparent; .library-name { color: var(--c-text); } }
 }
 
 .filter-row {
@@ -1188,35 +1275,19 @@ onMounted(async () => {
   gap: 10px;
   margin-bottom: 14px;
 }
-.filter-label { font-weight: 600; color: #333; }
-.chip {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: none;
-  background: var(--r-ui, #f2f2f2);
-  border-radius: 18px;
-  padding: 7px 16px;
-  font-size: 14px;
-  cursor: pointer;
-  color: #333;
-  &:hover { background: #e6e6e6; }
-  &.on { background: var(--r-accent, #8a4b3a); color: #fff; }
-  &.small { padding: 5px 12px; font-size: 12.5px; }
-  .chip-count { margin-left: 5px; font-size: 12px; opacity: 0.65; }
-  .chip-del { margin-left: 6px; opacity: 0.4; padding: 0 2px; &:hover { opacity: 1; color: #b05a4a; } }
-  .chip-edit { margin-left: 6px; opacity: 0.4; padding: 0 2px; &:hover { opacity: 1; } }
-}
+.filter-label { font-weight: 600; color: var(--c-text); }
 .chapter-row { margin-top: -4px; margin-bottom: 10px; padding-left: 4px; }
 .dimension-block {
   margin: 4px 0 16px;
   padding: 10px 14px;
   border-radius: 10px;
-  background: var(--r-ui, #f7f7f7);
+  background: var(--c-surface-2);
 }
 .dimension-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .dim-tab {
   border: none;
   background: transparent;
-  color: var(--r-ink2, #888);
+  color: var(--c-text-2);
   font-size: 13px;
   padding: 4px 12px;
   border-radius: 7px;
@@ -1224,8 +1295,8 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  &:hover:not(:disabled) { color: var(--r-ink, #333); }
-  &.on { background: var(--r-paper, #fff); color: var(--r-ink, #1c1c1c); font-weight: 600; }
+  &:hover:not(:disabled) { color: var(--c-text); }
+  &.on { background: var(--c-surface); color: var(--c-text); font-weight: 600; }
   &:disabled { opacity: 0.35; cursor: default; }
 }
 .dim-count { font-size: 11px; opacity: 0.6; }
@@ -1233,9 +1304,9 @@ onMounted(async () => {
 .dim-action {
   display: flex; align-items: center; gap: 8px;
   margin-top: 10px; padding-top: 10px;
-  border-top: 1px solid var(--r-border, #e8e8e8);
+  border-top: 1px solid var(--c-line);
 }
-.dim-hint { font-size: 12.5px; color: var(--r-ink2, #888); }
+.dim-hint { font-size: 12.5px; color: var(--c-text-2); }
 .chip.small.ghost { opacity: 0.75; border-style: dashed; }
 
 .tag-row { margin-top: -2px; margin-bottom: 18px; padding-left: 4px; }
@@ -1243,54 +1314,54 @@ onMounted(async () => {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.sel-count { font-size: 12.5px; color: var(--r-ink2, #888); }
+.sel-count { font-size: 12.5px; color: var(--c-text-2); }
 .card-wrap { position: relative; }
 .card-wrap.picking { cursor: pointer; }
 .card-wrap.picking :deep(*) { pointer-events: none; }
 .card-wrap.picked::after {
   content: ''; position: absolute; inset: 0; border-radius: 12px;
-  border: 2px solid var(--r-accent, #8a4b3a); pointer-events: none;
+  border: 2px solid var(--c-accent); pointer-events: none;
 }
 .pick-mark {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   width: 20px; height: 20px; border-radius: 50%;
-  border: 1px solid var(--r-border, #ccc); background: var(--r-paper, #fff);
+  border: 1px solid var(--c-line); background: var(--c-surface);
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; color: var(--r-accent, #8a4b3a);
+  font-size: 12px; color: var(--c-accent);
 }
 .search-row {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
-  margin: 4px 0 16px;
+  margin: 0 0 14px;
 }
 .search-box { position: relative; width: min(460px, 100%); }
 .word-search {
   width: 100%;
   padding: 9px 34px 9px 16px;
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 9999px;
-  background: var(--r-paper, #fff);
+  background: var(--c-surface);
   color: inherit;
   font-size: 14px;
   outline: none;
-  &:focus { border-color: var(--r-accent, #8a4b3a); }
+  &:focus { border-color: var(--c-accent); }
 }
 .search-clear {
   position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
   border: none; background: none; cursor: pointer;
-  font-size: 17px; line-height: 1; color: var(--r-ink2, #999);
-  &:hover { color: var(--r-ink, #333); }
+  font-size: 17px; line-height: 1; color: var(--c-text-2);
+  &:hover { color: var(--c-text); }
 }
-.search-count { font-size: 12.5px; color: var(--r-ink2, #999); }
+.search-count { font-size: 12.5px; color: var(--c-text-2); }
 .family-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 9px 14px; margin-bottom: 14px; border-radius: 9px;
-  background: var(--r-ui, #f2f2f2); font-size: 13px; color: var(--r-ink2, #666);
+  background: var(--c-surface-2); font-size: 13px; color: var(--c-text-2);
 }
 .chip.small.ghost { opacity: 0.7; border-style: dashed; }
 
 .status-tabs {
   display: inline-flex;
-  background: var(--r-ui, #f2f2f2);
+  background: var(--c-surface-2);
   border-radius: 10px;
   padding: 4px;
   margin-bottom: 14px;
@@ -1302,9 +1373,9 @@ onMounted(async () => {
   border-radius: 8px;
   font-size: 14px;
   cursor: pointer;
-  color: #444;
-  &.on { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); font-weight: 600; }
-  .tab-count { margin-left: 4px; font-size: 12px; color: #999; }
+  color: var(--c-text);
+  &.on { background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface)); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); font-weight: 600; }
+  .tab-count { margin-left: 4px; font-size: 12px; color: var(--c-text-2); }
 }
 
 .toolbar {
@@ -1316,48 +1387,26 @@ onMounted(async () => {
 }
 .seg {
   display: inline-flex;
-  background: var(--r-ui, #f2f2f2);
+  background: var(--c-surface-2);
   border-radius: 10px;
   padding: 4px;
 }
-.seg-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: none;
-  background: none;
-  padding: 7px 14px;
-  border-radius: 8px;
-  font-size: 14px;
-  cursor: pointer;
-  color: #444;
-  &.on { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); font-weight: 600; }
-}
 .dark-btn {
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
   transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
   border: none;
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
   border-radius: 9px;
   padding: 9px 20px;
   font-size: 14px;
   cursor: pointer;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
-}
-.ghost-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: 1px solid var(--r-border, #ddd);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
-  border-radius: 9px;
-  padding: 8px 14px;
-  font-size: 13px;
-  cursor: pointer;
-  color: #444;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
 }
 .enrich-banner {
   background: #fdf6e8;
   border: 1px solid #f0e2bd;
-  color: #8a6d2f;
+  color: var(--c-warn);
   border-radius: 8px;
   padding: 9px 14px;
   font-size: 13px;
@@ -1380,8 +1429,6 @@ onMounted(async () => {
   .grid-layout { grid-template-columns: 1fr; }
 }
 
-.empty-hint { color: #999; text-align: center; padding: 40px 0; }
-
 .pagination {
   display: flex;
   align-items: center;
@@ -1390,26 +1437,26 @@ onMounted(async () => {
   margin: 26px 0;
 }
 .page-btn {
-  border: 1px solid var(--r-border, #ddd);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  border: 1px solid var(--c-line);
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   border-radius: 8px;
   padding: 8px 18px;
   font-size: 14px;
   cursor: pointer;
   &:disabled { opacity: 0.4; cursor: not-allowed; }
-  &:not(:disabled):hover { background: #f5f5f5; }
-  &.primary { background: var(--r-accent, #8a4b3a); border-color: transparent; color: #fff; &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); } }
+  &:not(:disabled):hover { background: var(--c-surface-2); }
+  &.primary { background: var(--c-accent); border-color: transparent; color: var(--c-text-on-accent); &:hover { background: color-mix(in srgb, var(--c-accent) 82%, #000); } }
 }
-.page-info { color: #555; font-size: 14px; }
+.page-info { color: var(--c-text-2); font-size: 14px; }
 .page-size-select {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #666;
+  color: var(--c-text-2);
   font-size: 13.5px;
   margin-left: 8px;
   select {
-    border: 1px solid var(--r-border, #ddd);
+    border: 1px solid var(--c-line);
     border-radius: 7px;
     padding: 5px 8px;
     font-size: 13.5px;
@@ -1419,7 +1466,7 @@ onMounted(async () => {
 }
 
 .import-box {
-  border: 1px solid #eee;
+  border: 1px solid var(--c-line);
   border-radius: 12px;
   padding: 20px 22px;
 }
@@ -1430,13 +1477,13 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 14px;
-  h3 { font-size: 17px; color: #1a1a1a; }
-  p { color: #999; font-size: 12.5px; }
+  h3 { font-size: 17px; color: var(--c-text); }
+  p { color: var(--c-text-2); font-size: 12.5px; }
   code { background: #f4f4f4; padding: 1px 5px; border-radius: 4px; }
 }
 .import-form { display: flex; gap: 12px; flex-wrap: wrap; }
 .group-name-input {
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: 14px;
@@ -1447,37 +1494,24 @@ onMounted(async () => {
 .drop-zone {
   flex: 1;
   min-width: 240px;
-  border: 1.5px dashed #ccc;
+  border: 1.5px dashed var(--c-line);
   border-radius: 8px;
   padding: 22px;
   text-align: center;
-  color: #777;
+  color: var(--c-text-2);
   cursor: pointer;
   transition: all 0.15s;
-  &:hover, &.over { border-color: transparent; color: var(--r-ink, #1c1c1c); background: #fafafa; }
+  &:hover, &.over { border-color: transparent; color: var(--c-text); background: var(--c-surface-2); }
 }
-.import-msg { margin-top: 10px; color: #4a7d3a; font-size: 13px; }
-.lib-import-box {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px dashed #eee;
-}
-.lib-title { font-size: 14px; font-weight: 600; color: #1a1a1a; margin-bottom: 10px; }
-.lib-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.lib-status { font-size: 13px; color: #4a7d3a; }
+.import-msg { margin-top: 10px; color: var(--c-success); font-size: 13px; }
 
 .related-hint-toast {
   position: fixed;
   bottom: 90px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
   padding: 10px 18px;
   border-radius: 8px;
   font-size: 13.5px;
@@ -1495,8 +1529,8 @@ onMounted(async () => {
   writing-mode: vertical-rl;
   text-orientation: upright;
   letter-spacing: 4px;
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
   border: none;
   border-radius: 10px 0 0 10px;
   padding: 16px 8px;
@@ -1512,8 +1546,8 @@ onMounted(async () => {
   top: 100px;
   bottom: 16px;
   width: 380px;
-  background: #fff;
-  border: 1px solid #e6e6e6;
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   border-radius: 14px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   z-index: 300;
@@ -1536,24 +1570,24 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--c-line);
   flex-shrink: 0;
 }
-.universe-title { font-size: 13.5px; font-weight: 600; color: var(--r-ink, #1c1c1c); }
+.universe-title { font-size: 13.5px; font-weight: 600; color: var(--c-text); }
 .universe-actions { display: flex; gap: 6px; }
 .universe-icon-btn {
-  border: 1px solid #e6e6e6;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  border: 1px solid var(--c-line);
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   border-radius: 7px;
   padding: 5px 10px;
   font-size: 12px;
   cursor: pointer;
-  color: #444;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent); }
+  color: var(--c-text);
+  &:hover { background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface)); border-color: color-mix(in srgb, var(--c-accent) 42%, transparent); }
 }
 .universe-legend {
   padding: 8px 16px;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid var(--c-line);
   flex-shrink: 0;
 }
 .universe-graph { flex: 1; min-height: 0; position: relative; }
@@ -1572,9 +1606,9 @@ onMounted(async () => {
   border-radius: 9999px;
   font-size: 11px;
   line-height: 1.6;
-  color: var(--r-ink2, #666);
-  background: color-mix(in srgb, var(--r-paper, #fff) 82%, transparent);
-  border: 1px solid var(--r-border, #e2e2e2);
+  color: var(--c-text-2);
+  background: color-mix(in srgb, var(--c-surface) 82%, transparent);
+  border: 1px solid var(--c-line);
   backdrop-filter: blur(6px);
 }
 .universe-empty {
@@ -1582,7 +1616,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #999;
+  color: var(--c-text-2);
   font-size: 13px;
   padding: 0 20px;
   text-align: center;
@@ -1590,27 +1624,27 @@ onMounted(async () => {
 .chip-wrap { display: inline-flex; align-items: center; gap: 3px; }
 .chip.broken { border-color: #e0b4aa; background: #fdf5f3; }
 .value-row.managing {
-  background: var(--r-ui, #faf7f5);
+  background: var(--c-surface-2);
   border-radius: 10px;
   padding: 6px 8px;
 }
 .chip-act {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; flex-shrink: 0;
-  border: 1px solid var(--r-border, #e0e0e0); border-radius: 50%;
-  background: var(--r-paper, #fff); color: var(--r-ink2, #888);
+  border: 1px solid var(--c-line); border-radius: 50%;
+  background: var(--c-surface); color: var(--c-text-2);
   cursor: pointer; font-size: 13px; line-height: 1;
-  &:hover { color: var(--r-ink, #222); border-color: var(--r-ink2, #bbb); }
-  &.danger:hover { color: #c0492b; border-color: #e0b4aa; }
-  &.on { background: var(--r-accent, #8a4b3a); color: var(--r-paper, #fff); border-color: transparent; }
+  &:hover { color: var(--c-text); border-color: var(--c-text-2); }
+  &.danger:hover { color: var(--c-danger); border-color: #e0b4aa; }
+  &.on { background: var(--c-accent); color: var(--c-surface); border-color: transparent; }
   &:disabled { opacity: 0.4; cursor: default; }
 }
 .manage-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
-  margin-top: 8px; font-size: 12px; color: var(--r-ink2, #999); line-height: 1.6;
+  margin-top: 8px; font-size: 12px; color: var(--c-text-2); line-height: 1.6;
 }
-.manage-fix { display: inline-flex; align-items: center; gap: 8px; color: #c0492b; }
-.manage-msg { color: var(--r-ink, #444); }
+.manage-fix { display: inline-flex; align-items: center; gap: 8px; color: var(--c-danger); }
+.manage-msg { color: var(--c-text); }
 .import-mask {
   position: fixed; inset: 0; z-index: 200;
   background: rgba(0, 0, 0, 0.45);
@@ -1622,7 +1656,7 @@ onMounted(async () => {
   width: min(760px, 100%);
   max-height: 86vh;
   overflow-y: auto;
-  background: var(--r-paper, #fff);
+  background: var(--c-surface);
   border-radius: 14px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
   padding: 22px 24px;
@@ -1630,16 +1664,16 @@ onMounted(async () => {
 .import-close {
   position: absolute; right: 14px; top: 10px;
   border: none; background: none; cursor: pointer;
-  font-size: 22px; line-height: 1; color: var(--r-ink2, #999);
+  font-size: 22px; line-height: 1; color: var(--c-text-2);
 }
-.import-close:hover { color: var(--r-ink, #333); }
-.dim-tab.picked { border-color: var(--r-accent, #8a4b3a); }
+.import-close:hover { color: var(--c-text); }
+.dim-tab.picked { border-color: var(--c-accent); }
 .active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 10px; }
-.af-label { font-size: 11.5px; color: var(--r-ink2, #aaa); }
+.af-label { font-size: 11.5px; color: var(--c-text-2); }
 .af-chip {
-  border: 1px solid var(--r-accent, #8a4b3a); background: var(--r-ui, #f6f6f6);
-  color: var(--r-accent, #8a4b3a); border-radius: 9999px;
+  border: 1px solid var(--c-accent); background: var(--c-surface-2);
+  color: var(--c-accent); border-radius: 9999px;
   padding: 3px 9px; font-size: 12px; cursor: pointer;
 }
-.af-clear { border: none; background: none; cursor: pointer; font-size: 12px; color: var(--r-ink2, #999); }
+.af-clear { border: none; background: none; cursor: pointer; font-size: 12px; color: var(--c-text-2); }
 </style>

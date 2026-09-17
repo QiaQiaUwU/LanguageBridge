@@ -91,8 +91,8 @@ function onPointerUp(e: PointerEvent) {
   height: 52px;
   border-radius: 50%;
   border: none;
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -118,6 +118,6 @@ function onPointerUp(e: PointerEvent) {
   height: 12px;
   border-radius: 50%;
   background: #d9a441;
-  border: 2px solid var(--r-ink, #1c1c1c);
+  border: 2px solid var(--c-text);
 }
 </style>

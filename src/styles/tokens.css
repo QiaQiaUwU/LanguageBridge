@@ -1,0 +1,97 @@
+/*
+ * 三层 token：调色板（--r-*，由 themeStore 按皮肤写入）→ 语义（--c-*）→ 组件。
+ * 界面样式只用语义层和尺寸层，不写死色值与数值。
+ */
+:root {
+  /* 语义颜色 */
+  --c-text: var(--r-ink, #1f2328);
+  --c-text-2: var(--r-ink2, #8a9099);
+  --c-text-3: color-mix(in srgb, var(--r-ink2, #8a9099) 70%, transparent);
+  --c-text-on-accent: #fff;
+  --c-bg: var(--r-paper, #fff);
+  --c-surface: var(--r-paper, #fff);
+  --c-surface-2: var(--r-ui, #f4f5f7);
+  --c-line: var(--r-border, #e5e7eb);
+  --c-line-soft: color-mix(in srgb, var(--r-border, #e5e7eb) 55%, transparent);
+  --c-hover: color-mix(in srgb, var(--r-ink, #1f2328) 6%, transparent);
+  --c-press: color-mix(in srgb, var(--r-ink, #1f2328) 11%, transparent);
+  --c-accent: var(--r-accent, #5b7a99);
+  --c-accent-soft: color-mix(in srgb, var(--r-accent, #5b7a99) 13%, var(--r-paper, #fff));
+  --c-danger: #b5493c;
+  --c-danger-soft: color-mix(in srgb, #b5493c 10%, var(--r-paper, #fff));
+  --c-success: #3a8a5c;
+  --c-success-soft: color-mix(in srgb, #3a8a5c 12%, var(--r-paper, #fff));
+  --c-warn: #b7832f;
+  --c-warn-soft: color-mix(in srgb, #b7832f 14%, var(--r-paper, #fff));
+  --c-info: #4a78a8;
+  --c-star: #e0a526;
+  --c-mask: rgba(15, 17, 21, .42);
+
+  /* 笔记配色（手帐：橙、紫、青、黄、红） */
+  --c-note-orange: #e89a3c;
+  --c-note-orange-ink: #b5602a;
+  --c-note-purple: #8b6fd6;
+  --c-note-purple-ink: #6a52b8;
+  --c-note-teal: #3a8a8a;
+  --c-note-yellow: #e0b43c;
+  --c-note-sticky: #f3d45c;
+  --c-note-red: #e05a3c;
+  --c-shadow: 0 8px 26px rgba(0, 0, 0, .14);
+  --c-shadow-sm: 0 2px 8px rgba(0, 0, 0, .08);
+
+  /* 间距 */
+  --space-2xs: 3px;
+  --space-xs: 6px;
+  --space-sm: 12px;
+  --space-md: 24px;
+  --space-lg: 36px;
+  --space-xl: 48px;
+  --space-2xl: 60px;
+
+  /* 圆角 */
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-full: 999px;
+
+  /* 字号 */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+
+  /* 尺寸 */
+  --hit: 32px;          /* 图标按钮最小点击区 */
+  --icon: 18px;
+  --icon-sm: 14px;
+
+  /* 层级 */
+  --z-base: 0;
+  --z-raised: 1;
+  --z-content: 10;
+  --z-nav: 50;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-corner: 450;
+  --z-toast: 500;
+
+  /* 动效 */
+  --dur-fast: 80ms;
+  --dur-base: 140ms;
+  --dur-slow: 220ms;
+  --dur-enter: 300ms;
+  --dur-exit: 120ms;
+  --ease-enter: cubic-bezier(.2, .9, .3, 1.15);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --ease-std: cubic-bezier(.4, 0, .2, 1);
+  --ease-out: cubic-bezier(0, 0, .2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; --dur-enter: 0ms; --dur-exit: 0ms; }
+}

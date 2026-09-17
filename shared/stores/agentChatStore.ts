@@ -36,7 +36,7 @@ export function setPageContext(text: string) {
 const TOOLS: AiTool[] = [
   {
     name: 'add_todo',
-    description: '在用户的学习待办列表里新建一条待办事项，用户提到"提醒我""记得""待办"之类需求、或者明确说了要做什么事和什么时候做时调用。',
+    description: '在用户的学习待办列表里新建一条一次性待办事项，用户提到"记得""待办"、或者明确说了要做什么事和哪天做时调用。"每隔多少分钟提醒我"这种周期提醒不要用它，用 lb-action 的 setReminder。',
     parameters: {
       type: 'object',
       properties: {
@@ -84,7 +84,7 @@ export const useAgentChatStore = defineStore('agentChat', () => {
       const system =
         `你是一个耐心的英语学习助手。${todayContext()}${pageLine}\n\n${TOOL_PROMPT}\n\n${ACTION_PROMPT}`
       const result = await askAiWithTools(
-        `${contextLine}以下是对话上下文：\n${historyText}\n\n请针对用户最后的问题给出简洁、有帮助的中文回答。如果用户是在要求你记住/提醒某件事，调用 add_todo 工具去真的建一条待办，不要只是嘴上说"好的我记住了"。`,
+        `${contextLine}以下是对话上下文：\n${historyText}\n\n请针对用户最后的问题给出简洁、有帮助的中文回答。如果用户是在要求你记住某件事，调用 add_todo 工具去真的建一条待办；要每隔一段时间提醒用 setReminder，问有哪些提醒用 listReminders，取消用 cancelReminder。不要只是嘴上说"好的我记住了"。`,
         TOOLS,
         executeAddTodo,
         system

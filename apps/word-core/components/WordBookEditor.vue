@@ -29,7 +29,7 @@
           {{ c.name }}<span class="chip-count">{{ c.wordIds.length }}</span>
           <span class="chip-del" @click.stop="doDeleteChapter(c)">×</span>
         </button>
-        <button v-if="!showNewChapterInput" class="ghost-btn small" @click="showNewChapterInput = true">+ 新增章节</button>
+        <button v-if="!showNewChapterInput" class="ghost-btn small" title="新增章节" @click="showNewChapterInput = true">＋</button>
         <template v-else>
           <input v-model="newChapterName" class="wbe-chapter-input" placeholder="章节名称" @keyup.enter="confirmAddChapter" />
           <button class="ghost-btn small" @click="confirmAddChapter">确定</button>
@@ -39,10 +39,9 @@
 
       <div class="wbe-toolbar">
         <button class="ghost-btn small danger" :disabled="!selectedIds.size" @click="batchRemove">
-          批量移出（{{ selectedIds.size }}）
+          移出（{{ selectedIds.size }}）
         </button>
-        <span class="wbe-hint">移出只是把词从这本词书/章节里拿掉，词本身还在词库里，不会被删掉</span>
-        <button class="dark-btn" @click="addNewWord">+ 新增单词</button>
+        <button class="dark-btn" title="新增单词" @click="addNewWord">＋</button>
       </div>
 
       <div class="wbe-table-wrap">
@@ -68,8 +67,8 @@
                 <td><input v-model="editDraft.chinese" class="wbe-cell-input" /></td>
                 <td><input v-model="editDraft.phonetic" class="wbe-cell-input" /></td>
                 <td><input v-model="editDraft.pos" class="wbe-cell-input" /></td>
-                <td><input v-model="editDraft.collocations" class="wbe-cell-input" placeholder="用、分隔多个" /></td>
-                <td><input v-model="editDraft.collocationMeanings" class="wbe-cell-input" placeholder="用、分隔，跟左边一一对应" /></td>
+                <td><input v-model="editDraft.collocations" class="wbe-cell-input" placeholder="搭配" /></td>
+                <td><input v-model="editDraft.collocationMeanings" class="wbe-cell-input" placeholder="搭配释义" /></td>
                 <td><input v-model="editDraft.example" class="wbe-cell-input" /></td>
                 <td class="wbe-actions">
                   <button class="wbe-save-btn" @click="saveEditWord(w.id)">保存</button>
@@ -254,64 +253,47 @@ async function saveEditWord(wordId: string) {
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .wbe-box {
-  background: #fff; border-radius: 14px; width: min(1100px, 96vw); max-height: 90vh;
+  background: var(--c-surface); border-radius: 14px; width: min(1100px, 96vw); max-height: 90vh;
   display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3); overflow: hidden;
 }
-.wbe-head { display: flex; align-items: flex-end; gap: 12px; padding: 20px 22px 14px; border-bottom: 1px solid #eee; flex-wrap: wrap; }
+.wbe-head { display: flex; align-items: flex-end; gap: 12px; padding: 20px 22px 14px; border-bottom: 1px solid var(--c-line); flex-wrap: wrap; }
 .wbe-name-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px; }
-.wbe-label { font-size: 12px; color: #888; }
+.wbe-label { font-size: 12px; color: var(--c-text-2); }
 .wbe-name-input {
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 8px 12px; font-size: 15px; font-weight: 600; outline: none;
+  border: 1px solid var(--c-line); border-radius: 8px; padding: 8px 12px; font-size: 15px; font-weight: 600; outline: none;
   &:focus { border-color: #999; }
 }
-.wbe-chapters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 14px 22px; border-bottom: 1px solid #f0f0f0; }
-.wbe-chapter-input { border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 6px 10px; font-size: 13px; outline: none; width: 140px; }
-.chip {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: 1px solid #e4e4e4; background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-radius: 20px; padding: 6px 14px; font-size: 13px; color: #555; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
-  &.on { background: var(--r-accent, #8a4b3a); color: #fff; border-color: transparent; }
-}
+.wbe-chapters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 14px 22px; border-bottom: 1px solid var(--c-line); }
+.wbe-chapter-input { border: 1px solid var(--c-line); border-radius: 8px; padding: 6px 10px; font-size: 13px; outline: none; width: 140px; }
 .chip-count { font-size: 11px; opacity: 0.6; }
 .chip-del { margin-left: 2px; opacity: 0.5; &:hover { opacity: 1; } }
 .wbe-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 22px; flex-wrap: wrap; }
-.wbe-hint { font-size: 12px; color: #999; flex: 1; min-width: 160px; }
+.wbe-hint { font-size: 12px; color: var(--c-text-2); flex: 1; min-width: 160px; }
 .wbe-table-wrap { flex: 1; overflow: auto; padding: 0 22px; }
 .wbe-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .wbe-table th {
-  text-align: left; padding: 10px 8px; color: #888; font-weight: 500; font-size: 12.5px;
-  border-bottom: 1px solid #eee; position: sticky; top: 0; background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  text-align: left; padding: 10px 8px; color: var(--c-text-2); font-weight: 500; font-size: 12.5px;
+  border-bottom: 1px solid var(--c-line); position: sticky; top: 0; background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
 }
-.wbe-table td { padding: 10px 8px; border-bottom: 1px dashed #f2f2f2; vertical-align: top; color: #333; }
+.wbe-table td { padding: 10px 8px; border-bottom: 1px dashed #f2f2f2; vertical-align: top; color: var(--c-text); }
 .wbe-col-check { width: 32px; }
-.wbe-word-cell { font-weight: 600; color: #1a1a1a; }
+.wbe-word-cell { font-weight: 600; color: var(--c-text); }
 .wbe-example-cell { max-width: 260px; }
 .wbe-cell-input {
-  width: 100%; border: 1px solid var(--r-border, #ddd); border-radius: 6px; padding: 5px 8px; font-size: 12.5px; outline: none; box-sizing: border-box;
+  width: 100%; border: 1px solid var(--c-line); border-radius: 6px; padding: 5px 8px; font-size: 12.5px; outline: none; box-sizing: border-box;
   &:focus { border-color: #999; }
 }
 .wbe-actions { display: flex; gap: 6px; white-space: nowrap; }
 .wbe-edit-btn, .wbe-save-btn, .wbe-cancel-btn {
   border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer;
 }
-.wbe-edit-btn { background: var(--r-accent, #8a4b3a); color: #fff; &:hover { background: #333; } }
-.wbe-save-btn { background: #4a7d3a; color: #fff; &:hover { background: #3d6830; } }
-.wbe-cancel-btn { background: #f0f0f0; color: #555; &:hover { background: #e4e4e4; } }
-.wbe-empty { text-align: center; color: #999; padding: 30px 0; }
+.wbe-edit-btn { background: var(--c-accent); color: var(--c-text-on-accent); &:hover { background: #333; } }
+.wbe-save-btn { background: var(--c-success); color: var(--c-text-on-accent); &:hover { background: #3d6830; } }
+.wbe-cancel-btn { background: var(--c-surface-2); color: var(--c-text-2); &:hover { background: #e4e4e4; } }
+.wbe-empty { text-align: center; color: var(--c-text-2); padding: 30px 0; }
 tr.editing { background: #fafaf5; }
-.wbe-footer { display: flex; justify-content: flex-end; padding: 14px 22px; border-top: 1px solid #eee; }
-
-.ghost-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
-  color: var(--r-ink, #3a3128); cursor: pointer; padding: 6px 12px; border-radius: 7px; font-size: 12.5px;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent); }
-  &.small { padding: 5px 10px; font-size: 12px; }
-  &.danger { color: #b05a4a; border-color: #ecd4cf; &:hover { background: #f9ece9; } }
-  &:disabled { opacity: 0.4; cursor: not-allowed; &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); } }
-}
+.wbe-footer { display: flex; justify-content: flex-end; padding: 14px 22px; border-top: 1px solid var(--c-line); }
 .dark-btn {
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--r-accent, #8a4b3a); color: #fff; cursor: pointer; padding: 8px 20px; border-radius: 7px; font-size: 13px; &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); } }
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
+  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--c-accent); color: var(--c-text-on-accent); cursor: pointer; padding: 8px 20px; border-radius: 7px; font-size: 13px; &:hover { background: color-mix(in srgb, var(--c-accent) 82%, #000); } }
 </style>

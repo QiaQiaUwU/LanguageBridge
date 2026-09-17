@@ -118,3 +118,30 @@ export function tickTask(id: string) {
   const t = tasks.find(x => x.id === id)
   if (t) (t as any).__lastTick = Date.now()
 }
+
+/**
+ * 包装一个任务：无论函数里有多少提前 return，结束时一定会收尾。
+ * fn 返回字符串就作为完成说明；抛错就记失败；ctx.cancelled 为真则直接移除。
+ */
+export async function runTask<T>(
+  meta: Omit<RunningTask, 'startedAt' | 'status'>,
+  fn: (ctx: { progress: (detail: string, ratio?: number) => void; cancelled: () => boolean }) => Promise<T>,
+  opts: { cancelled?: () => boolean; doneText?: (r: T) => string } = {}
+): Promise<T | undefined> {
+  startTask(meta)
+  const progress = (detail: string, ratio?: number) => { updateTask(meta.id, { detail, ratio }); tickTask(meta.id) }
+  const cancelled = () => !!opts.cancelled?.()
+  try {
+    const r = await fn({ progress, cancelled })
+    if (cancelled()) endTask(meta.id)
+    else finishTask(meta.id, opts.doneText ? opts.doneText(r) : (typeof r === 'string' ? r : '完成'))
+    return r
+  } catch (e) {
+    if (cancelled()) endTask(meta.id)
+    else failTask(meta.id, e instanceof Error ? e.message : String(e))
+    return undefined
+  } finally {
+    const t = tasks.find(x => x.id === meta.id)
+    if (t && t.status === 'running') finishTask(meta.id, '完成')
+  }
+}

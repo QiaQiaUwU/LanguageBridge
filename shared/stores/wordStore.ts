@@ -14,6 +14,30 @@ import { applyGrade, flushFsrsData, nextReviewOf, Rating } from '@/shared/core/f
 export const useWordStore = defineStore('word', () => {
   const words = ref<WordItem[]>([])
   const groups = ref<WordGroup[]>([])
+
+  /**
+   * 词书里实际还在的词数。
+   *
+   * 直接显示 wordIds.length 会把已删除、已合并掉的词的旧 id 也算进去，
+   * 于是「词书 15139」跟「全部 17373」「真正能看到的词」三个数互相对不上。
+   * 界面上的词数一律用这个。
+   */
+  const groupSizes = computed(() => {
+    const alive = new Set(words.value.map(w => w.id))
+    const out = new Map<string, number>()
+    for (const g of groups.value) {
+      const seen = new Set<string>()
+      for (const id of g.wordIds || []) if (alive.has(id)) seen.add(id)
+      out.set(g.id, seen.size)
+    }
+    return out
+  })
+  function groupSize(g: WordGroup | string | null | undefined): number {
+    if (!g) return 0
+    const id = typeof g === 'string' ? g : g.id
+    return groupSizes.value.get(id) ?? 0
+  }
+
   const currentWord = ref<WordItem | null>(null)
   const currentIndex = ref<number>(0)
   const isLoading = ref<boolean>(false)
@@ -130,6 +154,13 @@ export const useWordStore = defineStore('word', () => {
     const ALL_ID = 'book-lib-all'
     const changed: WordGroup[] = []
     for (const g of list) {
+      // 旧名「完整释义库（全部）」让人以为它等于全部单词，其实只是释义库导入的那一批
+      if (g.id === ALL_ID && /^\s*完整释义库\s*[（(]\s*全部\s*[)）]\s*$/.test(g.name || '')) {
+        g.name = '释义库'
+        g.updatedAt = new Date().toISOString()
+        changed.push(g)
+        continue
+      }
       if (!g.id?.startsWith('book-lib-cat-')) continue
       let touched = false
       if (g.parentId !== ALL_ID) { g.parentId = ALL_ID; touched = true }
@@ -742,6 +773,7 @@ export const useWordStore = defineStore('word', () => {
   }
 
   return {
+    groupSize,
     words,
     groups,
     currentWord,

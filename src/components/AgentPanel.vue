@@ -27,11 +27,11 @@
           <button class="habit-checkin" :class="{ done: h.today }" :disabled="h.today" @click="doCheckin(h)">
             {{ h.today ? '今日已打卡' : '打卡' }}
           </button>
-          <button class="mini-del" @click="doDeleteHabit(h.id)">×</button>
+          <CloseButton class="mini-del" @click="doDeleteHabit(h.id)" small />
         </div>
-        <p v-if="!habits.length" class="empty-hint small">还没有习惯，比如"每天背10个词"</p>
+        <p v-if="!habits.length" class="empty-hint small">暂无</p>
         <div class="add-row">
-          <input v-model="newHabitName" placeholder="新习惯名称…" @keyup.enter="doAddHabit" />
+          <input v-model="newHabitName" placeholder="习惯" @keyup.enter="doAddHabit" />
           <button class="ghost-btn small" :disabled="!newHabitName.trim()" @click="doAddHabit">+</button>
         </div>
       </div>
@@ -42,11 +42,11 @@
           <input type="checkbox" :checked="t.done" @change="doToggleTodo(t)" />
           <span class="todo-text">{{ t.text }}</span>
           <span v-if="t.due" class="todo-due">{{ t.due }}</span>
-          <button class="mini-del" @click="doDeleteTodo(t.id)">×</button>
+          <CloseButton class="mini-del" @click="doDeleteTodo(t.id)" small />
         </div>
-        <p v-if="!todos.length" class="empty-hint small">还没有待办</p>
+        <p v-if="!todos.length" class="empty-hint small">暂无</p>
         <div class="add-row">
-          <input v-model="newTodoText" placeholder="新待办…" @keyup.enter="doAddTodo" />
+          <input v-model="newTodoText" placeholder="待办" @keyup.enter="doAddTodo" />
           <input v-model="newTodoDue" type="date" class="todo-due-input" title="截止日期（可选）" />
           <button class="ghost-btn small" :disabled="!newTodoText.trim()" @click="doAddTodo">+</button>
         </div>
@@ -65,12 +65,12 @@
           @click="applyProfile(p.name)"
         >
           {{ p.name }}
-          <span class="profile-x" @click.stop="deleteProfile(p.name)">×</span>
+          <CloseButton class="profile-x" title="删除" small @click="deleteProfile(p.name)" />
         </span>
       </div>
       <div class="save-profile-row">
-        <input v-model="newProfileName" class="profile-name-input" placeholder="给当前配置起个名字…" autocomplete="off" />
-        <button class="ghost-btn small" :disabled="!newProfileName.trim()" @click="doSaveProfile">存为配置档</button>
+        <input v-model="newProfileName" class="profile-name-input" placeholder="名称" autocomplete="off" />
+        <button class="ghost-btn small" :disabled="!newProfileName.trim()" title="存为配置档" @click="doSaveProfile">＋</button>
       </div>
 
       <label class="s-label">服务商</label>
@@ -79,20 +79,20 @@
         <option value="openai">OpenAI 兼容接口</option>
       </select>
 
-      <label class="s-label">Base URL（通常以 /v1 结尾）</label>
+      <label class="s-label">Base URL</label>
       <input v-model="aiSettings.baseUrl" class="s-input" autocomplete="off" :placeholder="aiSettings.provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.deepseek.com/v1'" />
       <!-- 少打一个 v 是最常见的错，报出来的是 404，从错误信息上根本看不出是地址写错了 -->
       <p v-if="baseUrlWarn" class="s-warn">{{ baseUrlWarn }}</p>
 
       <label class="s-label">API Key</label>
       <div class="key-row">
-        <input :type="showKey ? 'text' : 'password'" v-model="aiSettings.apiKey" class="s-input" autocomplete="new-password" placeholder="sk-... / your-api-key" />
+        <input :type="showKey ? 'text' : 'password'" v-model="aiSettings.apiKey" class="s-input" autocomplete="new-password" placeholder="API Key" />
         <button class="ghost-btn small" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
       </div>
 
       <label class="s-label">模型</label>
       <div class="key-row">
-        <input v-model="aiSettings.model" class="s-input" autocomplete="off" placeholder="点右边拉取可选模型" />
+        <input v-model="aiSettings.model" class="s-input" autocomplete="off" placeholder="模型" />
         <button class="ghost-btn small" :disabled="loadingModels || !aiSettings.apiKey.trim()" @click="doFetchModels">
           {{ loadingModels ? '获取中…' : '获取模型列表' }}
         </button>
@@ -110,9 +110,8 @@
         v-model="aiSettings.heavyModel"
         class="s-input"
         autocomplete="off"
-        placeholder="留空就用上面那个"
+        placeholder="同上"
       />
-      <p class="s-hint">长文任务用，留空就用上面那个</p>
       <div v-if="availableModels.length" class="models-grid">
         <button v-for="m in availableModels" :key="m" class="model-item" @click="aiSettings.model = m">{{ m }}</button>
       </div>
@@ -176,13 +175,13 @@
 
       <div v-if="agentSelectionContext" class="context-chip">
         <span class="context-chip-text">关于「{{ agentSelectionContext.text.length > 40 ? agentSelectionContext.text.slice(0, 40) + '…' : agentSelectionContext.text }}」</span>
-        <button class="context-chip-close" title="不带这段上下文" @click="clearAgentSelectionContext">×</button>
+        <CloseButton class="context-chip-close" title="不带这段上下文" @click="clearAgentSelectionContext" />
       </div>
       <div class="panel-input">
         <input
           ref="inputEl"
           v-model="input"
-          :placeholder="agentSelectionContext ? '问点什么，比如这段什么意思…' : '问 AI 助手：比如 abandon 什么意思…'"
+          placeholder="提问"
           :disabled="!aiReady"
           @keyup.enter="send"
         />
@@ -610,14 +609,14 @@ function onDragEnd(e: PointerEvent) {
   position: fixed;
   width: 360px;
   height: 480px;
-  background: #fff;
+  background: var(--c-surface);
   border-radius: 14px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   z-index: 600;
-  border: 1px solid #eee;
+  border: 1px solid var(--c-line);
   transition: width 0.15s;
 }
 .agent-panel.wide { width: 400px; }
@@ -634,8 +633,8 @@ function onDragEnd(e: PointerEvent) {
 }
 
 .panel-header {
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
   padding: 12px 14px;
   display: flex;
   align-items: center;
@@ -654,110 +653,97 @@ function onDragEnd(e: PointerEvent) {
 
 .header-actions { display: flex; gap: 4px; }
 .header-btn { border: none; background: none; color: #ccc; cursor: pointer; padding: 4px; border-radius: 6px; line-height: 0; }
-.header-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.12); }
-.header-btn.active { color: #fff; background: rgba(255, 255, 255, 0.22); }
+.header-btn:hover { color: var(--c-text-on-accent); background: rgba(255, 255, 255, 0.12); }
+.header-btn.active { color: var(--c-text-on-accent); background: rgba(255, 255, 255, 0.22); }
 
 .checkin-view { flex: 1; overflow-y: auto; padding: 14px; }
 
-.todo-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid #f0f0f0; }
-.section-title { font-size: 12.5px; font-weight: 600; color: #333; margin-bottom: 8px; }
-.empty-hint.small { color: #999; font-size: 11.5px; margin: 4px 0 8px; }
+.todo-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--c-line); }
+.section-title { font-size: 12.5px; font-weight: 600; color: var(--c-text); margin-bottom: 8px; }
 
 .habit-row {
   display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; flex-wrap: wrap;
 }
-.habit-name { font-weight: 600; color: #1a1a1a; flex-shrink: 0; }
-.habit-streak { color: #999; font-size: 11px; flex: 1; }
+.habit-name { font-weight: 600; color: var(--c-text); flex-shrink: 0; }
+.habit-streak { color: var(--c-text-2); font-size: 11px; flex: 1; }
 .habit-checkin {
-  border: 1px solid transparent; background: var(--r-accent, #8a4b3a); color: #fff; border-radius: 10px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+  border: 1px solid transparent; background: var(--c-accent); color: var(--c-text-on-accent); border-radius: 10px; padding: 3px 10px; font-size: 11px; cursor: pointer;
 }
-.habit-checkin.done { background: #eef4e8; color: #4a7d3a; border-color: #d8e4c8; cursor: default; }
-.habit-checkin:hover:not(.done) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
+.habit-checkin.done { background: #eef4e8; color: var(--c-success); border-color: #d8e4c8; cursor: default; }
+.habit-checkin:hover:not(.done) { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
 .mini-del { border: none; background: none; color: #ccc; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
-.mini-del:hover { color: #b05a4a; }
+.mini-del:hover { color: var(--c-danger); }
 
 .todo-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12.5px; }
-.todo-row.done .todo-text { color: #bbb; text-decoration: line-through; }
-.todo-text { flex: 1; color: #333; }
-.todo-due { color: #999; font-size: 11px; }
+.todo-row.done .todo-text { color: var(--c-text-2); text-decoration: line-through; }
+.todo-text { flex: 1; color: var(--c-text); }
+.todo-due { color: var(--c-text-2); font-size: 11px; }
 
 .add-row { display: flex; gap: 6px; margin-top: 8px; }
 .add-row input {
-  flex: 1; border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;
+  flex: 1; border: 1px solid var(--c-line); border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;
 }
 .add-row input:focus { border-color: #999; }
 .todo-due-input { flex: 0 0 auto !important; width: 118px; }
 .clear-chat-chip {
-  margin-top: 14px; border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent); background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); color: #666; font-size: 12px;
+  margin-top: 14px; border: 1px solid color-mix(in srgb, var(--c-accent) 24%, transparent); background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface)); color: var(--c-text-2); font-size: 12px;
   padding: 6px 12px; border-radius: 14px; cursor: pointer;
 }
-.clear-chat-chip:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); }
+.clear-chat-chip:hover { background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface)); }
 
 .settings-view { flex: 1; overflow-y: auto; padding: 16px; }
-.s-label { display: block; font-size: 12px; color: #666; margin: 10px 0 4px; }
+.s-label { display: block; font-size: 12px; color: var(--c-text-2); margin: 10px 0 4px; }
 .s-input {
-  width: 100%; border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 8px 10px; font-size: 13px; outline: none;
+  width: 100%; border: 1px solid var(--c-line); border-radius: 8px; padding: 8px 10px; font-size: 13px; outline: none;
 }
 .s-input:focus { border-color: #999; }
 .key-row { display: flex; gap: 6px; .s-input { flex: 1; } }
 .profiles-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .profile-chip {
-  display: flex; align-items: center; gap: 5px; background: var(--r-ui, #f2f2f2); border-radius: 14px; padding: 5px 10px;
-  font-size: 12px; cursor: pointer; color: #333;
+  display: flex; align-items: center; gap: 5px; background: var(--c-surface-2); border-radius: 14px; padding: 5px 10px;
+  font-size: 12px; cursor: pointer; color: var(--c-text);
 }
 .profile-chip:hover { background: #e6e6e6; }
-.profile-chip.on { background: var(--r-accent, #8a4b3a); color: #fff; }
+.profile-chip.on { background: var(--c-accent); color: var(--c-text-on-accent); }
 .profile-x { opacity: 0.55; &:hover { opacity: 1; } }
 .save-profile-row { display: flex; gap: 6px; margin-bottom: 12px; }
-.profile-name-input { flex: 1; border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 7px 10px; font-size: 12.5px; outline: none; }
+.profile-name-input { flex: 1; border: 1px solid var(--c-line); border-radius: 8px; padding: 7px 10px; font-size: 12.5px; outline: none; }
 .profile-name-input:focus { border-color: #999; }
 .s-hint {
   margin: 4px 0 10px; font-size: 11.5px; line-height: 1.65;
-  color: var(--r-ink2, #9aa0a6);
+  color: var(--c-text-2);
 }
 .act-bar {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 8px; padding: 8px 10px; border-radius: 8px;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
+  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-accent) 22%, transparent);
 }
-.act-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--r-ink, #1f2328); }
-.act-done { margin: 8px 0 0; font-size: 12.5px; color: var(--r-ink2, #6b7280); }
+.act-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--c-text); }
+.act-done { margin: 8px 0 0; font-size: 12.5px; color: var(--c-text-2); }
 
-.models-error { color: #b05a4a; font-size: 12px; margin: 6px 0; }
-.models-grid { display: flex; flex-wrap: wrap; gap: 5px; max-height: 120px; overflow-y: auto; padding: 8px; background: #fafafa; border-radius: 8px; margin: 6px 0; }
-.model-item { border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent); background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); border-radius: 10px; padding: 3px 9px; font-size: 11px; cursor: pointer; }
-.model-item:hover { background: var(--r-accent, #8a4b3a); color: #fff; border-color: transparent; }
-.settings-note { color: #999; font-size: 11px; margin: 12px 0 10px; line-height: 1.6; }
+.models-error { color: var(--c-danger); font-size: 12px; margin: 6px 0; }
+.models-grid { display: flex; flex-wrap: wrap; gap: 5px; max-height: 120px; overflow-y: auto; padding: 8px; background: var(--c-surface-2); border-radius: 8px; margin: 6px 0; }
+.model-item { border: 1px solid color-mix(in srgb, var(--c-accent) 24%, transparent); background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface)); border-radius: 10px; padding: 3px 9px; font-size: 11px; cursor: pointer; }
+.model-item:hover { background: var(--c-accent); color: var(--c-text-on-accent); border-color: transparent; }
+.settings-note { color: var(--c-text-2); font-size: 11px; margin: 12px 0 10px; line-height: 1.6; }
 .test-row { display: flex; align-items: center; gap: 10px; }
 .test-result { font-size: 12.5px; }
-.test-result.ok { color: #4a7d3a; }
-.test-result.bad { color: #b05a4a; }
-
-.ghost-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent); background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); border-radius: 8px; padding: 7px 12px; font-size: 12px; cursor: pointer; color: #444;
-}
-.ghost-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); }
-.ghost-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.ghost-btn.small { padding: 6px 10px; font-size: 11.5px; }
+.test-result.ok { color: var(--c-success); }
+.test-result.bad { color: var(--c-danger); }
 .dark-btn {
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--r-accent, #8a4b3a); color: #fff; border-radius: 8px; padding: 9px 18px; font-size: 13px; cursor: pointer; }
-.dark-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
+  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--c-accent); color: var(--c-text-on-accent); border-radius: 8px; padding: 9px 18px; font-size: 13px; cursor: pointer; }
+.dark-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
 .dark-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.quick-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
-.chip {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--r-ui, #f2f2f2); color: #333; font-size: 12px; padding: 6px 11px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
-.chip:hover:not(:disabled) { background: #e6e6e6; }
-.chip:disabled { opacity: 0.4; cursor: not-allowed; }
-.article-actions { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
+.quick-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--c-line); flex-shrink: 0; }
+.article-actions { padding: 10px 12px; border-bottom: 1px solid var(--c-line); flex-shrink: 0; }
 .article-actions-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .action-result {
   margin: 8px 0 0; font-size: 12px; padding: 6px 10px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  &.ok { background: #eef4e8; color: #4a7d3a; }
-  &.bad { background: #f9ece9; color: #b05a4a; }
+  &.ok { background: #eef4e8; color: var(--c-success); }
+  &.bad { background: #f9ece9; color: var(--c-danger); }
 }
 .action-result-close { cursor: pointer; opacity: 0.6; &:hover { opacity: 1; } }
 
@@ -768,32 +754,30 @@ function onDragEnd(e: PointerEvent) {
 .msg p {
   max-width: 82%; font-size: 13px; line-height: 1.6; white-space: pre-wrap; padding: 8px 12px; border-radius: 12px; margin: 0;
 }
-.msg.user p { background: var(--r-accent, #8a4b3a); color: #fff; border-bottom-right-radius: 4px; }
-.msg.assistant p { background: var(--r-ui, #f2f2f2); color: #222; border-bottom-left-radius: 4px; }
-.save-vocab-link { font-size: 11px; color: #999; cursor: pointer; margin-top: 3px; text-decoration: underline; }
-.save-vocab-link:hover { color: #555; }
+.msg.user p { background: var(--c-accent); color: var(--c-text-on-accent); border-bottom-right-radius: 4px; }
+.msg.assistant p { background: var(--c-surface-2); color: var(--c-text); border-bottom-left-radius: 4px; }
+.save-vocab-link { font-size: 11px; color: var(--c-text-2); cursor: pointer; margin-top: 3px; text-decoration: underline; }
+.save-vocab-link:hover { color: var(--c-text-2); }
+.thinking { color: var(--c-text-2); font-size: 12.5px; padding-left: 2px; }
 
-.empty-hint { color: #999; font-size: 12.5px; text-align: center; margin-top: 40px; }
-.thinking { color: #999; font-size: 12.5px; padding-left: 2px; }
-
-.panel-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid #f0f0f0; flex-shrink: 0; }
-.panel-input input { flex: 1; border: 1px solid var(--r-border, #ddd); border-radius: 18px; padding: 8px 14px; font-size: 13px; outline: none; }
+.panel-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--c-line); flex-shrink: 0; }
+.panel-input input { flex: 1; border: 1px solid var(--c-line); border-radius: 18px; padding: 8px 14px; font-size: 13px; outline: none; }
 .panel-input input:focus { border-color: #999; }
 .context-chip {
   display: flex; align-items: center; gap: 8px; margin: 0 12px 8px; padding: 6px 10px;
   background: #fdf3e0; border: 1px solid #ecd9ad; border-radius: 8px; flex-shrink: 0;
 }
-.context-chip-text { flex: 1; font-size: 12px; color: #8a6d2f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-chip-text { flex: 1; font-size: 12px; color: var(--c-warn); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .context-chip-close { border: none; background: none; color: #c2a15f; cursor: pointer; font-size: 15px; line-height: 1; flex-shrink: 0; }
-.context-chip-close:hover { color: #8a6d2f; }
+.context-chip-close:hover { color: var(--c-warn); }
 .send-btn {
-  width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--r-accent, #8a4b3a); color: #fff; cursor: pointer;
+  width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--c-accent); color: var(--c-text-on-accent); cursor: pointer;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.send-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
+.send-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .s-warn {
   margin: 4px 0 0; font-size: 12px; line-height: 1.5;
-  color: #c0392b;
+  color: var(--c-danger);
 }
 </style>

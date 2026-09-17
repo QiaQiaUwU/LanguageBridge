@@ -4,11 +4,15 @@ import App from './App.vue'
 import router from './router'
 import { requestPersistentStorage } from '@/shared/core/storagePersistence'
 import 'remixicon/fonts/remixicon.css'
+import './styles/tokens.css'
+import './styles/ui.css'
+import { installUi } from './components/ui'
 
 const app = createApp(App)
 
 app.use(createPinia())
 app.use(router)
+installUi(app)
 
 function showFatal(kind: string, err: unknown) {
   const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)

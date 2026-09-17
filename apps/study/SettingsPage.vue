@@ -34,8 +34,7 @@
         <div class="health-cell" :class="{ warn: health.noFamily }"><span class="hn">{{ health.noFamily }}</span><span class="hl">缺词族</span></div>
       </div>
       <p class="card-sub small">
-        免费可补：考纲标签 <b>{{ health.noTags }}</b>、词族 <b>{{ health.noFamily }}</b>、释义音标 <b>{{ health.fixableFree }}</b>。
-        需要 AI：<b>{{ health.needAi }}</b>。
+        可直接补 <b>{{ health.fixableFree }}</b> · 需 AI <b>{{ health.needAi }}</b>
       </p>
     </section>
 
@@ -48,11 +47,11 @@
           <span class="op-name">合并重复词条</span>
           <span class="op-desc">
             <template v-if="dupCount > 0"><b>{{ dupCount }} 个词有重复记录</b></template>
-            <template v-else-if="dupChecked">没有重复</template>
+            <template v-else-if="dupChecked">无重复</template>
           </span>
         </div>
         <button class="ghost-btn" :disabled="busy" @click="doDedupe">
-          {{ deduping ? '合并中…' : '开始合并' }}
+          {{ deduping ? '合并中…' : '合并' }}
         </button>
       </div>
 
@@ -62,16 +61,16 @@
           <span class="op-desc">
             <template v-if="lackBasicTodo > 0"><b>{{ lackBasicTodo }} 个待补</b></template>
             <template v-if="lackBasicTried > 0">
-              <template v-if="lackBasicTodo > 0"> · </template>{{ lackBasicTried }} 个查过也补不上
+              <template v-if="lackBasicTodo > 0"> · </template>{{ lackBasicTried }} 个无结果
             </template>
-            <template v-if="!lackBasicTodo && !lackBasicTried">信息都是全的</template>
+            <template v-if="!lackBasicTodo && !lackBasicTried">完整</template>
           </span>
           <label v-if="lackBasicTried > 0" class="op-desc">
-            <input v-model="redoTriedBasic" type="checkbox" /> 连查过补不上的也再试一遍
+            <input v-model="redoTriedBasic" type="checkbox" /> 含无结果的
           </label>
         </div>
         <button class="ghost-btn" :disabled="busy || (!lackBasicTodo && !redoTriedBasic)" @click="doEnrichBasic">
-          {{ enriching ? `补全中 ${enrichDone}/${enrichTotal}` : '开始补全' }}
+          {{ enriching ? `补全中 ${enrichDone}/${enrichTotal}` : '补全' }}
         </button>
       </div>
       <!--
@@ -86,11 +85,11 @@
       <!-- 重建缓存/索引/数据库体检是出问题时才用的运维操作，
            平时摆在这里只会让人以为需要定期点一下。收进折叠区。 -->
       <button class="fix-toggle" @click="showFixTools = !showFixTools">
-        {{ showFixTools ? '收起' : '出问题了？修复工具' }}
+        {{ showFixTools ? '收起' : '修复工具' }}
       </button>
       <template v-if="showFixTools">
         <div class="op-row">
-          <div class="op-info"><span class="op-name">从词库重建工作缓存</span></div>
+          <div class="op-info"><span class="op-name">工作缓存</span></div>
           <button class="ghost-btn small" :disabled="rebuilding" @click="doRebuildCache">
             {{ rebuilding ? '重建中…' : '重建缓存' }}
           </button>
@@ -98,15 +97,15 @@
         <p v-if="rebuildMsg" class="msg">{{ rebuildMsg }}</p>
         <div class="op-row">
           <div class="op-info">
-            <span class="op-name">检查词表引用</span>
-            <span class="op-desc">{{ relinkMsg || '词表显示 0 词、点进去说没有可学的词，多半是引用断了。这里清掉失效引用，整表空掉的会点名，重新导入一次即可。' }}</span>
+            <span class="op-name">词表引用</span>
+            <span v-if="relinkMsg" class="op-desc">{{ relinkMsg }}</span>
           </div>
           <button class="ghost-btn small" :disabled="relinking" @click="doRelinkGroups">
-            {{ relinking ? '检查中…' : '检查并修复' }}
+            {{ relinking ? '检查中…' : '修复' }}
           </button>
         </div>
         <div class="op-row">
-          <div class="op-info"><span class="op-name">重建词库索引</span></div>
+          <div class="op-info"><span class="op-name">词库索引</span></div>
           <button class="ghost-btn small" :disabled="reindexing" @click="doReindex">
             {{ reindexing ? '扫描中…' : '重建索引' }}
           </button>
@@ -114,8 +113,7 @@
         <p v-if="reindexMsg" class="msg">{{ reindexMsg }}</p>
         <div class="op-row">
           <div class="op-info">
-            <span class="op-name">同时跑几个对轴</span>
-            <span class="op-desc">机器好可以调高；跑起来明显卡顿就调回 1</span>
+            <span class="op-name">对轴并发</span>
           </div>
           <select v-model.number="alignConcurrency" class="tw-select" style="width: 90px">
             <option :value="1">1 个</option>
@@ -130,7 +128,7 @@
           <button class="ghost-btn small" @click="runInspect">体检</button>
         </div>
         <div class="op-row">
-          <div class="op-info"><span class="op-name">测一下 AI 改不改得动英文</span></div>
+          <div class="op-info"><span class="op-name">AI 改写测试</span></div>
           <button class="ghost-btn small" :disabled="probing" @click="runProbe">{{ probing ? '测试中' : '测试' }}</button>
         </div>
         <p v-if="probeMsg" class="msg">{{ probeMsg }}</p>
@@ -144,7 +142,7 @@
         <div class="op-form">
           <select v-model="tagBookId" class="mini-select">
             <option value="">选择词表</option>
-            <option v-for="g in books" :key="g.id" :value="g.id">{{ g.name }}（{{ g.wordIds.length }}）</option>
+            <option v-for="g in books" :key="g.id" :value="g.id">{{ g.name }}（{{ wordStore.groupSize(g) }}）</option>
           </select>
           <input v-model="tagValue" class="mini-input" placeholder="标签名" />
           <button class="ghost-btn small" :disabled="busy || !tagBookId || !tagValue.trim()" @click="applyTag(true)">加上</button>
@@ -160,17 +158,17 @@
 
       <div class="dict-bar">
         <select v-model="twPicked" class="tw-select" :disabled="twBusy || !twList.length">
-          <option value="" disabled>{{ twList.length ? '选一本词典' : '先加载词典列表' }}</option>
+          <option value="" disabled>{{ twList.length ? '词典' : '未加载' }}</option>
           <option v-for="d in twList" :key="d.url" :value="d.url">
             {{ d.name }}（{{ d.length || '?' }} 词）
           </option>
         </select>
         <button v-if="!twList.length" class="ghost-btn" :disabled="twBusy" @click="loadTwList">
-          {{ twBusy ? '加载中' : '加载词典列表' }}
+          {{ twBusy ? '加载中' : '加载词典' }}
         </button>
         <template v-else>
           <button class="ghost-btn" :disabled="twBusy || !twPicked" @click="runTwMerge">
-            {{ twBusy && twMode === 'merge' ? twProgress || '处理中' : '用它补例句' }}
+            {{ twBusy && twMode === 'merge' ? twProgress || '处理中' : '补例句' }}
           </button>
           <button class="dark-btn" :disabled="twBusy || !twPicked" @click="runTwImport">
             {{ twBusy && twMode === 'import' ? twProgress || '处理中' : '导入' }}
@@ -182,15 +180,11 @@
     </section>
 
     <section class="card">
-      <h3 class="card-title">AI 补全（词条缺什么补什么）</h3>
-      <p class="card-sub">
-        七个字段一起看：<b>中文释义 / 音标 / 例句 / 考纲来源 / 话题 / 词根词缀 / 词族</b>。
-        每个词只补它缺的那几项，已经有的一律不动。中断了下次接着跑。
-      </p>
+      <h3 class="card-title">AI 补全</h3>
 
       <div class="op-row">
         <div class="op-info">
-          <span class="op-name">跑之前先看一眼要做多少事</span>
+          <span class="op-name">范围</span>
         </div>
         <div class="op-form">
           <select v-model="aiScope" class="mini-select" :disabled="aiRunning">
@@ -198,41 +192,40 @@
             <option v-for="g in books" :key="g.id" :value="g.id">{{ g.name }}</option>
           </select>
           <button v-if="!aiRunning" class="ghost-btn small" :disabled="busy || aiProbing" @click="probeAi">
-            {{ aiProbing ? '试跑中…' : '试跑一批' }}
+            {{ aiProbing ? '试跑中…' : '试跑' }}
           </button>
-          <button v-if="!aiRunning" class="dark-btn small" :disabled="busy || !aiPreview.requests" @click="startAi">开始补全</button>
+          <button v-if="!aiRunning" class="dark-btn small" :disabled="busy || !aiPreview.requests" @click="startAi">补全</button>
           <template v-else>
             <button class="ghost-btn small" @click="stopAi">停止</button>
-            <button v-if="aiStuck" class="ghost-btn small" @click="startAi">长时间没动静，重开一轮</button>
+            <button v-if="aiStuck" class="ghost-btn small" @click="startAi">重开</button>
           </template>
         </div>
       </div>
       <div class="precheck">
         <div class="precheck-item run">
           <b>{{ aiForce ? aiPreview.pending + aiPreview.attempted : aiPreview.pending }}</b>
-          <span>七项里有缺的词</span>
-          <em>约 {{ aiPreview.requests }} 次模型请求</em>
+          <span>待补</span>
+          <em>约 {{ aiPreview.requests }} 次请求</em>
         </div>
         <div class="precheck-item">
           <b>{{ aiPreview.attempted }}</b>
-          <span>跑过但没填上</span>
+          <span>无结果</span>
         </div>
         <div class="precheck-item">
           <b>{{ aiPreview.complete }}</b>
-          <span>已经齐了</span>
-          <em>七项都全了，不会再跑</em>
+          <span>完整</span>
         </div>
 
       </div>
       <label class="check-line">
         <input v-model="aiForce" type="checkbox" :disabled="aiRunning" />
-        连"跑过但没填上"的那批也重跑一遍
+        含无结果的
       </label>
 
       <!-- 重跑指定项：比"连没填上的也重跑"粒度细得多。
            选中之后只跑这几项，而且**允许覆盖已有值** —— 用户点它就是嫌现在的值不对。 -->
       <button class="redo-toggle" @click="showRedo = !showRedo">
-        {{ showRedo ? '收起' : '想重跑某一项？' }}
+        {{ showRedo ? '收起' : '重跑指定项' }}
       </button>
       <div v-if="showRedo" class="redo-box">
         <label v-for="f in ENRICH_FIELD_LABELS" :key="f.key" class="redo-item">
@@ -242,20 +235,16 @@
         <!-- 重跑是**另一个动作**，有自己的按钮。
              上面那个「开始补全」永远只做"缺什么补什么"，两者互不干扰。 -->
         <div class="redo-actions">
-          <p class="redo-note">
-            <template v-if="redoFields.length">
-              范围内 <b>{{ aiTargets.length }}</b> 个词全部重跑这
-              {{ redoFields.length }} 项，<b>已有的值会被换掉</b>。
-              约 {{ Math.ceil(aiTargets.length / DEFAULT_BATCH_SIZE) }} 次模型请求。
-            </template>
-            <template v-else>勾上要重跑的项。不勾就用上面那个「开始补全」，它只补缺的。</template>
+          <p v-if="redoFields.length" class="redo-note">
+            <b>{{ aiTargets.length }}</b> 词 × {{ redoFields.length }} 项 · <b>覆盖已有值</b> ·
+            约 {{ Math.ceil(aiTargets.length / DEFAULT_BATCH_SIZE) }} 次请求
           </p>
           <button
             class="dark-btn small"
             :disabled="!redoFields.length || busy"
             @click="startRedo"
           >
-            重跑选中项
+            重跑
           </button>
         </div>
       </div>
@@ -266,37 +255,30 @@
         <p class="progress-text">
           {{ aiProgress.done }} / {{ aiProgress.total }}
           <template v-if="aiProgress.current">· 正在处理 {{ aiProgress.current }}</template>
-          <template v-if="aiProgress.failed"> · {{ aiProgress.failed }} 个未成功（下次补跑会自动重试）</template>
+          <template v-if="aiProgress.failed"> · {{ aiProgress.failed }} 个失败</template>
           <template v-if="aiSaved"> · 已存 {{ aiSaved }} 个</template>
         </p>
-        <p v-if="aiProgress.lastError" class="ai-err">最近一次失败：{{ aiProgress.lastError }}</p>
+        <p v-if="aiProgress.lastError" class="ai-err">失败：{{ aiProgress.lastError }}</p>
         <!-- 失败率过半基本就是模型选错了（推理模型不吐 JSON），
              与其让它一路烧完几百次请求，不如当场点破 -->
         <p v-if="allFailing" class="ai-err">
-          这一轮几乎每批都失败，多半是当前模型不适合结构化输出。先用「试跑一批」验一下，
-          或在 AI 面板里换一个普通对话模型（不带思考过程的）。
+          多数批次失败 · 当前模型不支持结构化输出
         </p>
       </div>
       <div v-if="aiProbe" class="probe-block" :class="{ bad: !aiProbe.ok }">
         <p class="probe-head">
           试跑 {{ aiProbe.sample.join('、') }}：
           <b v-if="aiProbe.ok">正常，解析出 {{ aiProbe.parsed }} 条</b>
-          <b v-else>没跑通</b>
+          <b v-else>失败</b>
         </p>
         <p v-if="aiProbe.error" class="probe-err">{{ aiProbe.error }}</p>
         <pre v-if="aiProbe.raw" class="probe-raw">{{ aiProbe.raw.slice(0, 600) }}</pre>
       </div>
 
-      <p class="card-sub small">
-        用 AI 面板里已配好的连接。<b>每批跑完立刻存盘</b>，中断后从断点接着走。
-      </p>
     </section>
 
     <section class="card">
       <h3 class="card-title">自定义配色</h3>
-      <p class="card-sub">
-        划线荧光笔和词汇宇宙共用一套色卡。先在色卡里备好颜色，再分给各处。
-      </p>
 
       <!-- ① 色卡本体：编辑 / 图片取色。所有颜色都从这里出。 -->
       <div class="palette-row">
@@ -309,7 +291,7 @@
               :value="c"
               @input="palSet(i, ($event.target as HTMLInputElement).value)"
             />
-            <button class="pal-x" title="删掉这个色" @click="palDel(i)">×</button>
+            <CloseButton class="pal-x" title="删除" @click="palDel(i)" small />
           </span>
           <button class="ghost-btn tiny" @click="palAdd">＋</button>
           <button class="ghost-btn tiny" @click="palReset">恢复默认</button>
@@ -322,7 +304,7 @@
             class="pal-sw"
             :class="{ on: armedColor === c }"
             :style="{ background: c }"
-            :title="armedColor === c ? '已上膛，点下面要染色的地方' : '点一下上膛'"
+            :title="c"
             @click="armedColor = armedColor === c ? '' : c"
           ></button>
         </template>
@@ -335,24 +317,23 @@
       <!-- 多套色卡：调好一套不容易，换主题时不该从头再调 -->
       <div class="palette-row sets">
         <select v-model="palSetName" class="pal-select" @change="loadPalSet">
-          <option value="">切换色卡…</option>
+          <option value="">色卡</option>
           <option v-for="ps in palSets" :key="ps.name" :value="ps.name">
             {{ ps.name }}{{ ps.builtin ? '（内置）' : '' }}
           </option>
         </select>
-        <input v-model="palNewName" class="pal-name-input" placeholder="给当前这套起个名字" />
+        <input v-model="palNewName" class="pal-name-input" placeholder="名称" />
         <button class="ghost-btn tiny" :disabled="!palNewName.trim()" @click="doSavePalSet">另存</button>
         <button
           class="ghost-btn tiny"
           :disabled="!palSetName || palSets.find(p => p.name === palSetName)?.builtin"
           @click="doDelPalSet"
-        >删掉这套</button>
+        >删除</button>
       </div>
 
       <div class="op-row">
         <div class="op-info">
-          <span class="op-name">从图片取色</span>
-          <span class="op-desc">取到的颜色并进色卡，不会覆盖已有的</span>
+          <span class="op-name">图片取色</span>
         </div>
         <div class="op-form">
           <input ref="paletteInputEl" type="file" accept="image/*" hidden @change="onPickImage" />
@@ -364,15 +345,13 @@
       <p v-if="paletteMsg" class="msg">{{ paletteMsg }}</p>
 
       <p v-if="armedColor" class="palette-hint armed-tip">
-        已上膛 <span class="armed-dot" :style="{ background: armedColor }"></span>，
-        点下面任意一处就染上去
+        已选 <span class="armed-dot" :style="{ background: armedColor }"></span>
       </p>
 
       <!-- ② 荧光标记 -->
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">划线荧光色</span>
-          <span class="op-desc">阅读时划线用的底色</span>
         </div>
         <div class="hl-picker">
           <button
@@ -388,7 +367,7 @@
             class="hl-dot custom"
             :class="{ on: defaultHl === 'custom', armed: !!armedColor }"
             :style="{ background: customHl }"
-            title="色卡上膛后点这里，把颜色染过来"
+            title="自定义"
             @click="armedColor ? dyeHighlight() : (defaultHl = 'custom')"
           ></button>
         </div>
@@ -405,25 +384,23 @@
             :class="{ on: colorDim === d.id }"
             @click="colorDim = d.id"
           >{{ d.label }}</button>
-          <button class="ghost-btn tiny" @click="doResetDim">重置这个维度</button>
+          <button class="ghost-btn tiny" @click="doResetDim">重置</button>
           <button
             class="ghost-btn tiny"
             :disabled="!paletteColors.length || !colorKeys.length"
             @click="doApplyPalette"
-          >整组套上</button>
+          >套用色卡</button>
         </div>
       </div>
 
-      <p v-if="!colorKeys.length" class="card-sub small">
-        当前词库里还没有这个维度的取值，先跑一遍上面的 AI 补全。
-      </p>
+      <p v-if="!colorKeys.length" class="card-sub small">暂无</p>
       <div v-else class="swatch-grid">
         <div
           v-for="k in colorKeys"
           :key="k.key"
           class="swatch-card"
           :class="{ armed: !!armedColor }"
-          :title="armedColor ? '点一下染成上膛的颜色' : '点色卡先上膛，或点右下角小圆点自由选色'"
+          :title="k.label"
           @click="armedColor && onPickColor(k.key, armedColor)"
         >
           <span class="swatch-name">{{ k.label }}</span>
@@ -440,42 +417,6 @@
     </section>
 
     <section class="card">
-      <h3 class="card-title">学习</h3>
-      <div class="op-row">
-        <div class="op-info">
-          <span class="op-name">学习与打字设置</span>
-        </div>
-        <button class="ghost-btn" @click="$router.push('/home')">去主页调整</button>
-      </div>
-      <div class="op-row">
-        <div class="op-info">
-          <span class="op-name">已掌握词表</span>
-        </div>
-        <button class="ghost-btn" @click="$router.push('/mastered')">管理</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <h3 class="card-title">定时提醒</h3>
-      <p class="op-desc">到点在悬浮球上提醒</p>
-      <div v-for="r in reminders" :key="r.id" class="op-row">
-        <div class="op-info">
-          <span class="op-name">{{ r.label }}</span>
-          <span class="op-desc">每 {{ r.minutes }} 分钟 · 下次 {{ nextAtText(r.nextAt) }}</span>
-        </div>
-        <button class="ghost-btn" @click="dropReminder(r.id)">删除</button>
-      </div>
-      <p v-if="!reminders.length" class="op-desc">还没有提醒。</p>
-      <div class="op-row">
-        <div class="op-info rm-new">
-          <input v-model="newReminderLabel" class="rm-input" placeholder="提醒我做什么（如：起来走走）" />
-          每 <input v-model.number="newReminderMinutes" type="number" min="1" max="1440" class="rm-num" /> 分钟
-        </div>
-        <button class="dark-btn" :disabled="!newReminderLabel.trim()" @click="addOne">添加</button>
-      </div>
-    </section>
-
-    <section class="card">
       <h3 class="card-title">数据</h3>
       <div class="op-row">
         <div class="op-info">
@@ -488,7 +429,7 @@
           <span class="op-name">恢复备份</span>
         </div>
         <label class="ghost-btn file-btn">
-          选择备份文件
+          选择文件
           <input type="file" accept="application/json,.json" hidden @change="onPickBackup" />
         </label>
       </div>
@@ -503,8 +444,8 @@
         <div class="op-info">
           <span class="op-name">当前规模</span>
           <span class="op-desc">
-            {{ wordStore.words.length }} 个词条 · {{ books.length }} 个词表 ·
-            {{ taggedCount }} 个词带标签 · {{ topicCount }} 个词带话题
+            {{ wordStore.words.length }} 词条 · {{ books.length }} 词表 ·
+            {{ taggedCount }} 带标签 · {{ topicCount }} 带话题
           </span>
         </div>
       </div>
@@ -532,32 +473,6 @@ import {
   readPalette, savePalette, resetPalette, mergeIntoPalette,
   listPaletteSets, savePaletteSet, deletePaletteSet
 } from '@/shared/core/sharedPalette'
-import { reminders as reminderList, addReminder, removeReminder, loadReminders } from '@/shared/core/agentActions'
-
-/* ---------- 定时提醒 ---------- */
-loadReminders()
-const reminders = ref([...reminderList])
-const newReminderLabel = ref('')
-const newReminderMinutes = ref(30)
-
-function refreshReminders() {
-  reminders.value = [...reminderList]
-}
-function addOne() {
-  const label = newReminderLabel.value.trim()
-  if (!label) return
-  addReminder(label, Math.max(1, Math.min(1440, newReminderMinutes.value || 30)))
-  newReminderLabel.value = ''
-  refreshReminders()
-}
-function dropReminder(id: string) {
-  removeReminder(id)
-  refreshReminders()
-}
-function nextAtText(at: number): string {
-  const left = Math.max(0, Math.round((at - Date.now()) / 60000))
-  return left <= 0 ? '马上' : `${left} 分钟后`
-}
 import {
   sourceColor, masteryColor, topicColor, relationColor,
   setColor, applyPalette, resetDimension, hasOverrides,
@@ -1336,16 +1251,16 @@ onMounted(async () => {
 .settings { max-width: 860px; margin: 0 auto; padding: 18px 20px 70px; }
 .page-title { font-size: 20px; margin: 0 0 18px; }
 .card {
-  border: 1px solid var(--r-border, #e4e4e4);
+  border: 1px solid var(--c-line);
   border-radius: 14px;
   padding: 18px 20px;
   margin-bottom: 16px;
-  background: var(--r-paper, #fff);
+  background: var(--c-surface);
 }
 .card-title { font-size: 15.5px; margin: 0 0 6px; }
 .card-sub {
   font-size: 12.5px;
-  color: var(--r-ink2, #888);
+  color: var(--c-text-2);
   line-height: 1.7;
   margin: 0 0 14px;
   &.small { margin: 12px 0 0; }
@@ -1353,7 +1268,7 @@ onMounted(async () => {
 
 .skin-grid { display: flex; gap: 10px; flex-wrap: wrap; }
 .skin {
-  border: 1px solid var(--r-border, #e4e4e4);
+  border: 1px solid var(--c-line);
   border-radius: 10px;
   padding: 8px 10px;
   background: transparent;
@@ -1363,7 +1278,7 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  &.on { border-color: var(--r-accent, #8a4b3a); box-shadow: 0 0 0 1px var(--r-accent, #8a4b3a) inset; }
+  &.on { border-color: var(--c-accent); box-shadow: 0 0 0 1px var(--c-accent) inset; }
 }
 .swatch {
   width: 26px; height: 20px; border-radius: 5px;
@@ -1378,67 +1293,61 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 16px;
   padding: 12px 0;
-  border-top: 1px solid var(--r-border, #f0f0f0);
+  border-top: 1px solid var(--c-line);
   flex-wrap: wrap;
   &:first-of-type { border-top: none; }
 }
 .op-info { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 3px; }
 .op-name { font-size: 14px; font-weight: 500; }
-.op-desc { font-size: 12.5px; color: var(--r-ink2, #888); line-height: 1.6; }
+.op-desc { font-size: 12.5px; color: var(--c-text-2); line-height: 1.6; }
 .op-form { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
 .mini-select, .mini-input {
   padding: 5px 9px;
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 7px;
-  background: var(--r-ui, #fafafa);
+  background: var(--c-surface-2);
   color: inherit;
   font-size: 13px;
 }
 .mini-input { width: 120px; }
 .fix-toggle {
   border: none; background: none; cursor: pointer;
-  color: var(--r-ink2, #9aa0a6); font-size: 13px; padding: 6px 0;
-  &:hover { color: var(--r-ink, #1f2328); }
+  color: var(--c-text-2); font-size: 13px; padding: 6px 0;
+  &:hover { color: var(--c-text); }
 }
 .db-info {
   margin: 10px 0 0; padding: 10px 12px; border-radius: 8px;
-  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #5b6570);
+  background: var(--c-surface-2); color: var(--c-text-2);
   font: 12.5px/1.7 ui-monospace, Consolas, monospace; white-space: pre-wrap;
 }
 .dict-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .dict-bar .tw-select { flex: 1; min-width: 220px; }
-.tw-select { width: 100%; max-width: 420px; padding: 7px 10px; border: 1px solid var(--r-border, #e5e7eb); border-radius: 8px; background: var(--r-paper, #fff); color: var(--r-ink, #1f2328); }
+.tw-select { width: 100%; max-width: 420px; padding: 7px 10px; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-surface); color: var(--c-text); }
 .msg {
   font-size: 12.5px;
-  color: var(--r-accent, #8a4b3a);
+  color: var(--c-accent);
   margin: 12px 0 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: var(--r-ui, #f6f6f6);
+  background: var(--c-surface-2);
 }
 .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
 .health-cell {
-  border-radius: 9px; background: var(--r-ui, #f6f6f6);
+  border-radius: 9px; background: var(--c-surface-2);
   padding: 11px 8px; text-align: center;
   display: flex; flex-direction: column; gap: 3px;
 }
 .health-cell .hn { font-size: 19px; font-weight: 600; }
-.health-cell .hl { font-size: 11.5px; color: var(--r-ink2, #999); }
-.health-cell.warn .hn { color: #d9822b; }
+.health-cell .hl { font-size: 11.5px; color: var(--c-text-2); }
+.health-cell.warn .hn { color: var(--c-warn); }
 
 .dim-tabs { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .dim-tabs .spacer { flex: 1; }
-.mode-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  padding: 5px 11px; border-radius: 8px; font-size: 12.5px; cursor: pointer;
-  border: 1px solid var(--r-border, #ddd); background: transparent; color: inherit;
-  &.on { background: var(--r-accent, #8a4b3a); color: var(--r-paper, #fff); border-color: transparent; }
-}
 .swatch-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatch {
   display: flex; align-items: center; gap: 7px;
   padding: 5px 10px 5px 6px; border-radius: 9px;
-  border: 1px solid var(--r-border, #e4e4e4); background: var(--r-ui, #fafafa);
+  border: 1px solid var(--c-line); background: var(--c-surface-2);
   cursor: pointer;
   input[type="color"] {
     width: 26px; height: 26px; padding: 0; border: none; border-radius: 6px;
@@ -1453,50 +1362,50 @@ onMounted(async () => {
   flex: 1 1 150px;
   display: flex; flex-direction: column; gap: 2px;
   padding: 10px 12px;
-  border: 1px solid var(--r-border, #e4e4e4);
+  border: 1px solid var(--c-line);
   border-radius: 10px;
-  background: var(--r-ui, #fafafa);
+  background: var(--c-surface-2);
   b { font-size: 22px; font-weight: 600; line-height: 1.15; }
-  span { font-size: 12.5px; color: var(--r-ink2, #888); }
-  em { font-size: 11.5px; font-style: normal; color: var(--r-ink2, #aaa); line-height: 1.5; }
-  &.run { border-color: var(--r-accent, #8a4b3a); b { color: var(--r-accent, #8a4b3a); } }
+  span { font-size: 12.5px; color: var(--c-text-2); }
+  em { font-size: 11.5px; font-style: normal; color: var(--c-text-2); line-height: 1.5; }
+  &.run { border-color: var(--c-accent); b { color: var(--c-accent); } }
 }
 .check-line {
   display: flex; align-items: flex-start; gap: 7px;
   margin-top: 10px; font-size: 12.5px; line-height: 1.6;
-  color: var(--r-ink2, #888); cursor: pointer;
+  color: var(--c-text-2); cursor: pointer;
   input { margin-top: 3px; flex-shrink: 0; }
 }
 .progress-block { margin-top: 12px; }
-.progress-bar { height: 6px; border-radius: 3px; background: var(--r-border, #eee); overflow: hidden; }
+.progress-bar { height: 6px; border-radius: 3px; background: var(--c-line); overflow: hidden; }
 .progress-fill { height: 100%; background: #72c240; transition: width 0.3s ease; }
-.progress-text { font-size: 12.5px; color: var(--r-ink2, #888); margin: 6px 0 0; }
+.progress-text { font-size: 12.5px; color: var(--c-text-2); margin: 6px 0 0; }
 
-.ai-err { font-size: 12.5px; color: #c0492b; margin: 6px 0 0; line-height: 1.6; word-break: break-all; }
+.ai-err { font-size: 12.5px; color: var(--c-danger); margin: 6px 0 0; line-height: 1.6; word-break: break-all; }
 .probe-block {
   margin-top: 12px; padding: 10px 12px; border-radius: 10px;
-  border: 1px solid var(--r-border, #e4e4e4); background: var(--r-ui, #fafafa);
+  border: 1px solid var(--c-line); background: var(--c-surface-2);
 }
 .probe-block.bad { border-color: #e0b4aa; }
-.probe-head { font-size: 12.5px; margin: 0; color: var(--r-ink2, #777); }
-.probe-head b { color: var(--r-ink, #333); }
-.probe-block.bad .probe-head b { color: #c0492b; }
-.probe-err { font-size: 12.5px; color: #c0492b; margin: 6px 0 0; line-height: 1.6; word-break: break-all; }
+.probe-head { font-size: 12.5px; margin: 0; color: var(--c-text-2); }
+.probe-head b { color: var(--c-text); }
+.probe-block.bad .probe-head b { color: var(--c-danger); }
+.probe-err { font-size: 12.5px; color: var(--c-danger); margin: 6px 0 0; line-height: 1.6; word-break: break-all; }
 .probe-raw {
   margin: 8px 0 0; padding: 8px; max-height: 220px; overflow: auto;
   font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-all;
-  background: var(--r-paper, #fff); border: 1px solid var(--r-border, #eee); border-radius: 8px;
-  color: var(--r-ink2, #666);
+  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: 8px;
+  color: var(--c-text-2);
 }
 .palette-wrap { display: flex; flex-direction: column; gap: 14px; }
 .palette-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.palette-label { font-size: 12px; color: var(--r-ink2, #999); margin-right: 4px; }
+.palette-label { font-size: 12px; color: var(--c-text-2); margin-right: 4px; }
 .pal-sw {
   width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
-  border: 2px solid transparent; box-shadow: 0 0 0 1px var(--r-border, #ddd) inset;
+  border: 2px solid transparent; box-shadow: 0 0 0 1px var(--c-line) inset;
 }
-.pal-sw.on { border-color: var(--r-ink, #222); transform: translateY(-2px); }
-.palette-hint { font-size: 12px; color: var(--r-accent, #8a4b3a); margin-left: 6px; }
+.pal-sw.on { border-color: var(--c-text); transform: translateY(-2px); }
+.palette-hint { font-size: 12px; color: var(--c-accent); margin-left: 6px; }
 .swatch-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px;
 }
@@ -1504,10 +1413,10 @@ onMounted(async () => {
   position: relative;
   display: flex; align-items: center; gap: 9px;
   padding: 8px 10px; border-radius: 10px;
-  border: 1px solid var(--r-border, #e4e4e4); background: var(--r-paper, #fff);
+  border: 1px solid var(--c-line); background: var(--c-surface);
 }
 .swatch-card.armed { cursor: pointer; }
-.swatch-card.armed:hover { border-color: var(--r-accent, #8a4b3a); background: var(--r-ui, #faf7f5); }
+.swatch-card.armed:hover { border-color: var(--c-accent); background: var(--c-surface-2); }
 .swatch-preview {
   width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12) inset;
@@ -1520,41 +1429,30 @@ onMounted(async () => {
 }
 .swatch-free input:hover { opacity: 1; }
 .file-btn { cursor: pointer; display: inline-flex; align-items: center; }
-.op-desc.warn { color: #b5493c; }
+.op-desc.warn { color: var(--c-danger); }
 .hl-picker { display: flex; gap: 7px; }
 .hl-dot {
   width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
   border: 1px solid rgba(0, 0, 0, .12);
 }
-.hl-dot.on { box-shadow: 0 0 0 2px var(--r-paper, #fff), 0 0 0 3.5px var(--r-accent, #8a4b3a); }
-.hl-input { width: 46px; height: 28px; border: 1px solid var(--r-border, #e5e7eb); border-radius: 6px; cursor: pointer; }
+.hl-dot.on { box-shadow: 0 0 0 2px var(--c-surface), 0 0 0 3.5px var(--c-accent); }
+.hl-input { width: 46px; height: 28px; border: 1px solid var(--c-line); border-radius: 6px; cursor: pointer; }
 
-.rm-new { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rm-input {
-  flex: 1; min-width: 180px; padding: 6px 10px; font-family: inherit; font-size: 13px;
-  border: 1px solid var(--r-line, #e5e7eb); border-radius: 8px; background: transparent;
-  color: var(--r-ink, #1f2328);
-}
-.rm-num {
-  width: 64px; padding: 6px 8px; font-family: inherit; font-size: 13px;
-  border: 1px solid var(--r-line, #e5e7eb); border-radius: 8px; background: transparent;
-  color: var(--r-ink, #1f2328);
-}
 .redo-toggle {
   border: none; background: none; padding: 0; margin-top: 8px;
   cursor: pointer; font-family: inherit; font-size: 12.5px;
-  color: var(--r-accent, #8a4b3a);
+  color: var(--c-accent);
   &:hover { text-decoration: underline; }
 }
 .redo-box {
   margin-top: 8px; padding: 10px 12px;
-  border: 1px solid var(--r-border, #e6e6e6); border-radius: 10px;
+  border: 1px solid var(--c-line); border-radius: 10px;
   display: flex; flex-wrap: wrap; gap: 10px 16px;
 }
 .redo-item { display: flex; align-items: center; gap: 5px; font-size: 13px; }
 .redo-note {
   flex-basis: 100%; margin: 2px 0 0;
-  font-size: 12px; line-height: 1.6; color: var(--r-ink2, #9aa0a6);
+  font-size: 12px; line-height: 1.6; color: var(--c-text-2);
 }
 .redo-actions {
   flex-basis: 100%; display: flex; align-items: center; gap: 12px;
@@ -1572,28 +1470,28 @@ onMounted(async () => {
   position: absolute; right: -4px; top: -5px;
   width: 14px; height: 14px; line-height: 12px; text-align: center;
   border: none; border-radius: 50%; cursor: pointer;
-  background: var(--r-ink2, #9aa0a6); color: #fff; font-size: 11px; padding: 0;
+  background: var(--c-text-2); color: var(--c-text-on-accent); font-size: 11px; padding: 0;
 }
 .pal-edit-btn {
   margin-left: auto; border: none; background: none; cursor: pointer;
-  font-family: inherit; font-size: 12px; color: var(--r-accent, #8a4b3a);
+  font-family: inherit; font-size: 12px; color: var(--c-accent);
   &:hover { text-decoration: underline; }
 }
-.hl-dot.custom { outline: 1.5px dashed var(--r-border, #d5d5d5); outline-offset: 2px; }
-.hl-dot.custom.armed { outline-color: var(--r-accent, #8a4b3a); }
+.hl-dot.custom { outline: 1.5px dashed var(--c-line); outline-offset: 2px; }
+.hl-dot.custom.armed { outline-color: var(--c-accent); }
 .ghost-btn.tiny { padding: 3px 9px; font-size: 12px; border-radius: 7px; }
 .dim-head {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   margin-top: 18px; padding-top: 14px;
-  border-top: 1px solid var(--r-border, #eee);
+  border-top: 1px solid var(--c-line);
 }
 .dim-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 .dim-tab {
-  border: 1px solid var(--r-border, #e0e0e0); background: transparent;
+  border: 1px solid var(--c-line); background: transparent;
   border-radius: 8px; padding: 4px 11px; cursor: pointer;
-  font-family: inherit; font-size: 12.5px; color: var(--r-ink2, #777);
+  font-family: inherit; font-size: 12.5px; color: var(--c-text-2);
   &.on {
-    background: var(--r-accent, #8a4b3a); border-color: var(--r-accent, #8a4b3a); color: #fff;
+    background: var(--c-accent); border-color: var(--c-accent); color: var(--c-text-on-accent);
   }
 }
 .armed-tip { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; }
@@ -1603,26 +1501,26 @@ onMounted(async () => {
 }
 .palette-row.sets { margin-top: 8px; gap: 8px; }
 .pal-select, .pal-name-input {
-  border: 1px solid var(--r-border, #e0e0e0); border-radius: 8px;
+  border: 1px solid var(--c-line); border-radius: 8px;
   padding: 4px 8px; font-family: inherit; font-size: 12.5px;
-  background: transparent; color: var(--r-ink, #1f2328);
+  background: transparent; color: var(--c-text);
 }
 .pal-name-input { width: 150px; }
 .link-btn {
   border: none; background: none; padding: 0; cursor: pointer;
-  font-family: inherit; font-size: inherit; color: var(--r-accent, #8a4b3a);
+  font-family: inherit; font-size: inherit; color: var(--c-accent);
   &:hover { text-decoration: underline; }
 }
 .dirty-box {
   margin-top: 10px; padding: 10px 12px;
-  border: 1px solid var(--r-border, #eee); border-radius: 10px;
+  border: 1px solid var(--c-line); border-radius: 10px;
 }
-.dirty-note { margin: 0 0 8px; font-size: 12px; line-height: 1.6; color: var(--r-ink2, #888); }
+.dirty-note { margin: 0 0 8px; font-size: 12px; line-height: 1.6; color: var(--c-text-2); }
 .dirty-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .dirty-chip {
   padding: 2px 8px; border-radius: 6px; font-size: 12px;
-  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #777);
+  background: var(--c-surface-2); color: var(--c-text-2);
 }
 .dirty-acts { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-.dirty-warn { font-size: 12px; color: var(--r-ink2, #9aa0a6); }
+.dirty-warn { font-size: 12px; color: var(--c-text-2); }
 </style>

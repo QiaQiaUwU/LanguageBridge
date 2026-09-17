@@ -1,11 +1,8 @@
 <template>
   <div class="list-page">
     <header class="page-head">
-      <button class="ghost-btn small" @click="$router.push('/home')">← 主页</button>
-      <div>
-        <h2 class="title">生词本</h2>
-        <p class="sub">标为「不认识」和「模糊」的词。跟「已掌握」相反，这些是要重点练的。</p>
-      </div>
+      <BackLink label="主页" to="/home" />
+      <h2 class="title">生词本</h2>
     </header>
 
     <div class="toolbar">
@@ -20,16 +17,15 @@
           模糊 <span class="c">{{ counts.fuzzy }}</span>
         </button>
       </div>
-      <input v-model="keyword" class="search" placeholder="搜索单词或释义" />
+      <input v-model="keyword" class="search" placeholder="搜索" />
       <button class="dark-btn small" :disabled="!filtered.length" @click="studyThese">
-        练这批（{{ filtered.length }}）
+        练习（{{ filtered.length }}）
       </button>
     </div>
 
     <section v-if="calendar.length" class="calendar">
       <div class="cal-head">
         <span class="sec-title">生词日历</span>
-        <span class="cal-hint">点某一天只看那天标的词</span>
       </div>
       <div class="cal-row">
         <button
@@ -54,7 +50,7 @@
       <li v-for="w in filtered" :key="w.id" class="row">
         <span class="w">{{ w.word }}</span>
         <span class="ph">{{ w.phonetic }}</span>
-        <span class="zh">{{ w.meanings?.[0]?.chinese || '—' }}</span>
+        <span class="zh">{{ w.meanings?.[0]?.chinese }}</span>
         <span class="badge" :class="w.status">{{ w.status === 'unknown' ? '不认识' : '模糊' }}</span>
         <button class="ghost-btn tiny" @click="markKnown(w)">标为认识</button>
       </li>
@@ -128,44 +124,37 @@ onMounted(() => wordStore.loadWords())
 
 <style scoped lang="scss">
 .list-page { max-width: 900px; margin: 0 auto; padding: 18px 20px 60px; }
-.page-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+.page-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
 .title { font-size: 19px; margin: 0 0 4px; }
-.sub { font-size: 12.5px; color: var(--r-ink2, #888); margin: 0; line-height: 1.6; }
+.sub { font-size: 12.5px; color: var(--c-text-2); margin: 0; line-height: 1.6; }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .chip-row { display: flex; gap: 6px; }
-.chip {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  padding: 5px 12px; border-radius: 9999px; font-size: 13px; cursor: pointer;
-  border: 1px solid var(--r-border, #ddd); background: transparent; color: inherit;
-  &.on { background: var(--r-accent, #8a4b3a); color: var(--r-paper, #fff); border-color: transparent; }
-  .c { opacity: 0.6; margin-left: 4px; font-size: 12px; }
-}
 .search {
-  padding: 6px 10px; border: 1px solid var(--r-border, #ddd); border-radius: 8px;
-  background: var(--r-ui, #fafafa); color: inherit; font-size: 13.5px; min-width: 180px; flex: 1;
+  padding: 6px 10px; border: 1px solid var(--c-line); border-radius: 8px;
+  background: var(--c-surface-2); color: inherit; font-size: 13.5px; min-width: 180px; flex: 1;
 }
 .calendar { margin-bottom: 16px; }
 .cal-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
-.sec-title { font-size: 13.5px; font-weight: 600; color: var(--r-ink2, #666); }
-.cal-hint { font-size: 12px; color: var(--r-ink2, #aaa); }
+.sec-title { font-size: 13.5px; font-weight: 600; color: var(--c-text-2); }
+.cal-hint { font-size: 12px; color: var(--c-text-2); }
 .cal-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
 .cal-cell {
   flex-shrink: 0; min-width: 56px; padding: 7px 6px; border-radius: 9px;
-  border: 1px solid var(--r-border, #eee); background: var(--r-ui, #f7f7f7);
+  border: 1px solid var(--c-line); background: var(--c-surface-2);
   cursor: pointer; display: flex; flex-direction: column; gap: 2px; color: inherit;
-  &.on { border-color: var(--r-accent, #8a4b3a); background: var(--r-paper, #fff); }
+  &.on { border-color: var(--c-accent); background: var(--c-surface); }
 }
-.cal-day { font-size: 11.5px; color: var(--r-ink2, #999); }
+.cal-day { font-size: 11.5px; color: var(--c-text-2); }
 .cal-count { font-size: 15px; font-weight: 600; }
-.empty { color: var(--r-ink2, #999); font-size: 13.5px; padding: 46px 0; text-align: center; line-height: 1.7; }
+.empty { color: var(--c-text-2); font-size: 13.5px; padding: 46px 0; text-align: center; line-height: 1.7; }
 .rows { list-style: none; padding: 0; margin: 0; }
 .row {
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 4px; border-bottom: 1px solid var(--r-border, #eee); font-size: 14px;
+  padding: 10px 4px; border-bottom: 1px solid var(--c-line); font-size: 14px;
 }
 .row .w { min-width: 130px; font-weight: 500; }
-.row .ph { min-width: 110px; font-size: 12.5px; color: var(--r-ink2, #999); }
-.row .zh { flex: 1; font-size: 13px; color: var(--r-ink2, #777); }
+.row .ph { min-width: 110px; font-size: 12.5px; color: var(--c-text-2); }
+.row .zh { flex: 1; font-size: 13px; color: var(--c-text-2); }
 .badge {
   font-size: 11.5px; padding: 2px 8px; border-radius: 9999px;
   &.unknown { background: rgba(217, 83, 79, 0.12); color: #c0413c; }

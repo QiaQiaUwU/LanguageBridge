@@ -33,6 +33,7 @@ const NEEDS_CONFIRM = new Set([
   'renameWordList',
   'addWordsToList',
   'setReminder',
+  'cancelReminder',
   'cleanupArticle'
 ])
 
@@ -53,6 +54,8 @@ export const ACTION_PROMPT = `你可以操作这个软件。需要动手时输�
 - addWordsToList  {list, words[]}       把词加进指定词表；words 留空表示"我最近查过的词"
 - queryWords      {root?, topic?, level?, limit?}  按词根/话题/掌握度查词，只读不改
 - setReminder     {label, minutes}      定时提醒（复习、喝水、休息）
+- listReminders   {}                    列出已设的提醒，只读
+- cancelReminder  {label}               取消提醒；label 写「全部」则全部取消
 - openPage        {page}                跳到某个页面：universe/words/study/reading/dictation
 - cleanupArticle  {title}               对某篇文章跑一次整理
 
@@ -94,6 +97,10 @@ export function describeAction(a: ActionSpec): string {
       return `往「${g.list}」里加 ${n ? n + ' 个词' : '最近查过的词'}`
     }
     case 'setReminder': return `每 ${g.minutes} 分钟提醒一次：${g.label}`
+    case 'listReminders': return '查看提醒（只读）'
+    case 'cancelReminder': return String(g.label || '').trim() === '全部'
+      ? '取消全部提醒'
+      : `取消提醒「${g.label}」`
     case 'openPage': return `跳到「${g.page}」页面`
     case 'cleanupArticle': return `整理文章《${g.title}》`
     case 'queryWords': return '查词（只读）'
@@ -212,6 +219,40 @@ export async function runAction(a: ActionSpec, deps: ActionDeps): Promise<Action
         return { ok: true, summary: `好，每 ${minutes} 分钟提醒一次「${label}」` }
       }
 
+      case 'listReminders': {
+        loadReminders()
+        if (!reminders.length) return { ok: true, summary: '现在没有提醒' }
+        const now = Date.now()
+        const lines = reminders.map(r => {
+          const left = Math.max(0, Math.round((r.nextAt - now) / 60000))
+          return `「${r.label}」每 ${r.minutes} 分钟，下次 ${left ? left + ' 分钟后' : '马上'}`
+        })
+        return { ok: true, summary: `共 ${reminders.length} 个提醒：` + lines.join('；') }
+      }
+
+      case 'cancelReminder': {
+        loadReminders()
+        const label = String(g.label || '').trim()
+        if (!label) return { ok: false, summary: '没说取消哪个提醒' }
+        if (label === '全部') {
+          const n = reminders.length
+          for (const r of [...reminders]) removeReminder(r.id)
+          return { ok: true, summary: n ? `已取消全部 ${n} 个提醒` : '本来就没有提醒' }
+        }
+        // 先精确匹配，没有再模糊匹配；模糊命中多个时不猜
+        let hits = reminders.filter(r => r.label === label)
+        if (!hits.length) hits = reminders.filter(r => r.label.includes(label) || label.includes(r.label))
+        if (!hits.length) {
+          return { ok: false, summary: `没找到「${label}」这个提醒` +
+            (reminders.length ? `，现有：${reminders.map(r => r.label).join('、')}` : '，现在没有提醒') }
+        }
+        if (hits.length > 1 && !hits.every(r => r.label === hits[0].label)) {
+          return { ok: false, summary: `「${label}」对上了好几个：${hits.map(r => r.label).join('、')}，没有取消，请说具体一点` }
+        }
+        for (const r of hits) removeReminder(r.id)
+        return { ok: true, summary: `已取消提醒「${hits[0].label}」` }
+      }
+
       case 'openPage': {
         const map: Record<string, string> = {
           universe: '/universe', words: '/words', study: '/study',
@@ -255,7 +296,8 @@ export const reminders: Reminder[] = []
 
 export function addReminder(label: string, minutes: number) {
   reminders.push({
-    id: 'r-' + Date.now().toString(36),
+    // 只用时间戳时，同一毫秒建的两个提醒 id 相同，删一个会删错
+    id: 'r-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     label,
     minutes,
     nextAt: Date.now() + minutes * 60_000

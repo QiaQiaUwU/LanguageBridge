@@ -36,6 +36,9 @@ function migrateGroupHierarchy(store) {
   const allGroupId = 'book-lib-all'
   let touched = false
   for (const g of groups) {
+    if (g.id === allGroupId && /^\s*完整释义库\s*[（(]\s*全部\s*[)）]\s*$/.test(g.name || '')) {
+      g.name = '释义库'; touched = true; continue
+    }
     if (!g.id || !g.id.startsWith('book-lib-cat-')) continue
     if (g.parentId !== allGroupId) { g.parentId = allGroupId; touched = true }
     /**
@@ -254,7 +257,7 @@ export function runVocabverseImportIfNeeded(rootDir, store) {
   if (!allGroup) {
     allGroup = {
       id: allGroupId,
-      name: '完整释义库（全部）',
+      name: '释义库',
       description: `${SOURCE_LABEL} 全量导入`,
       wordIds: [...allWordIds],
       createdAt: now,

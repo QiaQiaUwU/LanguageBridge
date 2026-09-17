@@ -16,7 +16,7 @@
           click-mode="select"
           @select="onPick"
         />
-        <p v-else class="w-empty">词库里没找到相关的词</p>
+        <p v-else class="w-empty">暂无</p>
       </div>
     </template>
 
@@ -30,7 +30,7 @@
         </div>
         <div class="wc-mean">{{ meaningOf(w) }}</div>
       </div>
-      <p v-if="!cardWords.length" class="w-empty">词库里没有这些词</p>
+      <p v-if="!cardWords.length" class="w-empty">暂无</p>
     </div>
 
     <!-- 紧凑词表 -->
@@ -151,49 +151,49 @@ function onPick(word: string) {
 <style scoped lang="scss">
 .lb-widget {
   margin: 8px 0;
-  border: 1px solid var(--r-border, #e5e7eb);
+  border: 1px solid var(--c-line);
   border-radius: 10px;
   overflow: hidden;
-  background: var(--r-paper, #fff);
+  background: var(--c-surface);
 }
 .w-head {
   width: 100%;
   display: flex; align-items: center; gap: 8px;
   padding: 9px 11px; border: none; background: none;
   cursor: pointer; font-size: 13px; text-align: left;
-  &:hover { background: var(--r-ui, #f5f6f8); }
+  &:hover { background: var(--c-surface-2); }
 }
-.w-icon { color: var(--r-accent, #8a4b3a); }
-.w-title { flex: 1; min-width: 0; color: var(--r-ink, #1f2328); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.w-hint { flex-shrink: 0; color: var(--r-ink2, #9aa0a6); font-size: 12px; }
-.w-graph { height: 260px; border-top: 1px solid var(--r-border, #eef0f2); }
-.w-empty { margin: 0; padding: 14px; color: var(--r-ink2, #9aa0a6); font-size: 12.5px; text-align: center; }
+.w-icon { color: var(--c-accent); }
+.w-title { flex: 1; min-width: 0; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-hint { flex-shrink: 0; color: var(--c-text-2); font-size: 12px; }
+.w-graph { height: 260px; border-top: 1px solid var(--c-line); }
+.w-empty { margin: 0; padding: 14px; color: var(--c-text-2); font-size: 12.5px; text-align: center; }
 
 .w-cards { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-.w-card { padding: 8px 10px; border-radius: 8px; background: var(--r-ui, #f7f8fa); }
+.w-card { padding: 8px 10px; border-radius: 8px; background: var(--c-surface-2); }
 .wc-top { display: flex; align-items: baseline; gap: 8px; }
-.wc-word { font-size: 15px; font-weight: 600; color: var(--r-ink, #1f2328); }
-.wc-ph { font-size: 12px; color: var(--r-ink2, #9aa0a6); }
+.wc-word { font-size: 15px; font-weight: 600; color: var(--c-text); }
+.wc-ph { font-size: 12px; color: var(--c-text-2); }
 .wc-say { border: none; background: none; cursor: pointer; font-size: 13px; margin-left: auto; }
-.wc-mean { margin-top: 3px; font-size: 13px; color: var(--r-ink2, #6b7280); line-height: 1.6; }
+.wc-mean { margin-top: 3px; font-size: 13px; color: var(--c-text-2); line-height: 1.6; }
 
 .w-list { padding: 9px; display: flex; flex-wrap: wrap; gap: 6px; }
 .w-chip {
   padding: 4px 10px; border-radius: 999px;
-  border: 1px solid var(--r-border, #e5e7eb); background: none;
-  font-size: 12.5px; color: var(--r-ink, #1f2328); cursor: pointer;
-  &:hover { border-color: var(--r-accent, #8a4b3a); color: var(--r-accent, #8a4b3a); }
+  border: 1px solid var(--c-line); background: none;
+  font-size: 12.5px; color: var(--c-text); cursor: pointer;
+  &:hover { border-color: var(--c-accent); color: var(--c-accent); }
 }
 
 .w-quiz { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
-.q-text { font-size: 13.5px; color: var(--r-ink, #1f2328); margin-bottom: 2px; }
+.q-text { font-size: 13.5px; color: var(--c-text); margin-bottom: 2px; }
 .q-opt {
   padding: 7px 11px; border-radius: 8px; text-align: left;
-  border: 1px solid var(--r-border, #e5e7eb); background: none;
-  font-size: 13px; color: var(--r-ink, #1f2328); cursor: pointer;
-  &:hover:not(:disabled) { border-color: var(--r-accent, #8a4b3a); }
-  &.right { border-color: #3a8a5c; background: color-mix(in srgb, #3a8a5c 10%, transparent); }
-  &.wrong { border-color: #b5493c; background: color-mix(in srgb, #b5493c 10%, transparent); }
+  border: 1px solid var(--c-line); background: none;
+  font-size: 13px; color: var(--c-text); cursor: pointer;
+  &:hover:not(:disabled) { border-color: var(--c-accent); }
+  &.right { border-color: var(--c-success); background: color-mix(in srgb, var(--c-success) 10%, transparent); }
+  &.wrong { border-color: var(--c-danger); background: color-mix(in srgb, var(--c-danger) 10%, transparent); }
 }
-.q-fb { font-size: 12.5px; color: var(--r-ink2, #6b7280); }
+.q-fb { font-size: 12.5px; color: var(--c-text-2); }
 </style>

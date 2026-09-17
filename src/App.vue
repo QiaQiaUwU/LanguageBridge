@@ -5,9 +5,13 @@
         <span v-if="!navCollapsed" class="logo">LanguageBridge</span>
       </div>
 
-      <button class="nav-fold" :title="navCollapsed ? '展开导航' : '收起导航'" @click="toggleNav">
-        <i :class="navCollapsed ? 'ri-arrow-right-s-line' : 'ri-arrow-left-s-line'"></i>
-      </button>
+      <FoldToggle
+        class="nav-fold"
+        :folded="navCollapsed"
+        :icons="['ri-arrow-right-s-line', 'ri-arrow-left-s-line']"
+        title="导航"
+        @update:folded="toggleNav"
+      />
 
       <nav class="nav-list">
         <router-link
@@ -33,13 +37,7 @@
       <span class="header-article-title">{{ readingArticleTitle }}</span>
       <!-- 笔记面板在右边，入口就放右边。原来按钮在最左、面板在最右，
            点一个东西结果对面弹出来，方向对不上。 -->
-      <button
-        class="header-article-toggle"
-        :title="readingSidePanelOpen ? '收起笔记' : '展开笔记'"
-        @click="readingSidePanelOpen = !readingSidePanelOpen"
-      >
-        <i :class="readingSidePanelOpen ? 'ri-side-bar-fill' : 'ri-side-bar-line'"></i>
-      </button>
+      <FoldToggle class="header-article-toggle" side="right" :folded="!readingSidePanelOpen" @update:folded="v => readingSidePanelOpen = !v" />
     </div>
 
     <div v-if="storagePersisted === false && !storagePersistDismissed" class="storage-warning">
@@ -47,13 +45,12 @@
         浏览器没有批准"持久化存储"，这意味着文章/单词这些数据存在浏览器本地，但理论上仍可能在磁盘空间紧张时被浏览器自动清掉，不需要你做任何操作——数据丢失极端情况下可能就是这个原因。
         建议：定期用"导出分享包"/"从后端恢复"这类功能做个备份，或者把这个页面"添加到主屏幕/安装为应用"能提高浏览器保留数据的优先级。
       </span>
-      <button class="storage-warning-close" @click="storagePersistDismissed = true">×</button>
+      <CloseButton class="storage-warning-close" @click="storagePersistDismissed = true" />
     </div>
 
     <div v-if="showQR" class="qr-overlay" @click.self="showQR = false">
       <div class="qr-box">
-        <div class="qr-head"><span>手机/平板连接</span><button class="qr-close" @click="showQR = false">×</button></div>
-        <p class="qr-hint">手机/平板连同一个 WiFi，扫码或输入地址访问，不需要联网</p>
+        <div class="qr-head"><span>手机/平板连接</span><CloseButton class="qr-close" @click="showQR = false" /></div>
         <div class="qr-img-wrap">
           <img v-if="qrUrl" :src="`https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=0&data=${encodeURIComponent(qrUrl)}`" alt="二维码" />
           <span v-else class="qr-loading">获取地址中…</span>
@@ -78,7 +75,7 @@
 
     <FloatingAgentButton />
     <AgentPanel />
-    <TaskCenter />
+    <CornerStack />
   </div>
 </template>
 
@@ -91,7 +88,7 @@ import { useWordStore } from '@/shared/stores/wordStore'
 import { useThemeStore } from '@/shared/stores/themeStore'
 import FloatingAgentButton from './components/FloatingAgentButton.vue'
 import AgentPanel from './components/AgentPanel.vue'
-import TaskCenter from './components/TaskCenter.vue'
+import CornerStack from './components/CornerStack.vue'
 import { storagePersisted, storagePersistDismissed } from '@/shared/core/storagePersistence'
 import { readingSidePanelOpen, readingArticleTitle } from '@/shared/core/readingPanelState'
 import { agentPanelOpen } from '@/shared/core/agentPanelState'
@@ -315,8 +312,8 @@ onMounted(() => {
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: var(--r-paper, #e8f4f8);
-  color: var(--r-ink, #1a1a1a);
+  background: var(--c-surface);
+  color: var(--c-text);
   min-height: 100vh;
   transition: background 0.2s, color 0.2s;
 }
@@ -346,8 +343,8 @@ body {
   flex-direction: column;
   gap: 4px;
   padding: 14px 10px;
-  background: var(--r-ui, #fff);
-  border-right: 1px solid var(--r-border, #e6e6e6);
+  background: var(--c-surface-2);
+  border-right: 1px solid var(--c-line);
   z-index: 100;
   transition: width 0.18s ease;
 }
@@ -365,25 +362,21 @@ body {
 }
 .nav-fold {
   position: absolute;
-  right: -11px;
+  right: -12px;
   top: 50%;
   transform: translateY(-50%);
-  width: 22px;
-  height: 44px;
-  border: 1px solid var(--r-border, #e2e2e2);
-  border-radius: 0 8px 8px 0;
-  background: var(--r-ui, #fff);
-  color: var(--r-ink2, #999);
-  cursor: pointer;
+  z-index: var(--z-nav);
+  width: 24px;
+  min-width: 24px;
+  height: 48px;
   padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 101;
-  font-size: 15px;
-  line-height: 1;
-  &:hover { color: var(--r-ink, #333); }
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-full);
+  background: var(--c-surface);
+  box-shadow: var(--c-shadow-sm);
 }
+.nav-fold:hover { background: var(--c-surface-2); }
+.nav-fold:active { transform: translateY(-50%) scale(.94); }
 .nav-list { display: flex; flex-direction: column; gap: 3px; }
 
 /* left 用变量，不写死 178px —— 侧栏收起后是 56px，写死就整条错位 */
@@ -398,8 +391,8 @@ body {
   justify-content: space-between;
   gap: 8px;
   padding: 0 18px;
-  background: var(--r-ui, #fff);
-  border-bottom: 1px solid var(--r-border, #e6e6e6);
+  background: var(--c-surface-2);
+  border-bottom: 1px solid var(--c-line);
   z-index: 80;
 }
 .side-nav.collapsed ~ .article-topbar { left: 56px; }
@@ -438,7 +431,7 @@ body {
 .logo {
   font-size: 20px;
   font-weight: 700;
-  color: var(--r-accent, #3a86ff);
+  color: var(--c-accent);
   flex-shrink: 0;
 }
 
@@ -446,16 +439,16 @@ body {
   display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
 }
 .header-article-toggle {
-  border: none; background: none; cursor: pointer; color: var(--r-ink2, #666); display: flex; align-items: center; padding: 4px; border-radius: 6px; flex-shrink: 0; font-size: 18px; line-height: 1;
-  &:hover { color: var(--r-ink, #1a1a1a); background: color-mix(in srgb, var(--r-accent, #3a86ff) 8%, transparent); }
+  border: none; background: none; cursor: pointer; color: var(--c-text-2); display: flex; align-items: center; padding: 4px; border-radius: 6px; flex-shrink: 0; font-size: 18px; line-height: 1;
+  &:hover { color: var(--c-text); background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
 }
 .header-article-title {
-  font-size: 14px; font-weight: 600; color: var(--r-ink, #1a1a1a);
+  font-size: 14px; font-weight: 600; color: var(--c-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 .nav-search {
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 13px;
@@ -463,8 +456,8 @@ body {
   outline: none;
   margin-bottom: 8px;
   background: transparent;
-  color: var(--r-ink, #1a1a1a);
-  &:focus { border-color: var(--r-accent, #3a86ff); }
+  color: var(--c-text);
+  &:focus { border-color: var(--c-accent); }
 }
 
 .nav-item {
@@ -476,18 +469,18 @@ body {
   white-space: nowrap;
   border-radius: 8px;
   text-decoration: none;
-  color: var(--r-ink2, #666);
+  color: var(--c-text-2);
   font-size: 14px;
   transition: all 0.2s;
 }
 
 .nav-item:hover {
-  background: color-mix(in srgb, var(--r-accent, #3a86ff) 12%, transparent);
-  color: var(--r-accent, #3a86ff);
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  color: var(--c-accent);
 }
 
 .nav-item.active {
-  background: var(--r-accent, #3a86ff);
+  background: var(--c-accent);
   color: white;
 }
 
@@ -516,7 +509,7 @@ body {
   padding: 16px;
 }
 .qr-box {
-  background: #fff;
+  background: var(--c-surface);
   border-radius: 14px;
   padding: 22px 26px;
   width: min(300px, 100%);
@@ -529,12 +522,12 @@ body {
   justify-content: space-between;
   font-size: 15px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--c-text);
   margin-bottom: 6px;
 }
-.qr-close { border: none; background: none; font-size: 20px; cursor: pointer; color: #999; line-height: 1; }
-.qr-close:hover { color: #333; }
-.qr-hint { font-size: 12px; color: #999; margin-bottom: 16px; line-height: 1.6; }
+.qr-close { border: none; background: none; font-size: 20px; cursor: pointer; color: var(--c-text-2); line-height: 1; }
+.qr-close:hover { color: var(--c-text); }
+.qr-hint { font-size: 12px; color: var(--c-text-2); margin-bottom: 16px; line-height: 1.6; }
 .qr-img-wrap {
   width: 200px;
   height: 200px;
@@ -542,13 +535,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fafafa;
+  background: var(--c-surface-2);
   border-radius: 8px;
   img { width: 100%; height: 100%; }
 }
-.qr-loading { font-size: 12.5px; color: #999; }
-.qr-url { font-size: 12.5px; color: #555; word-break: break-all; }
-.qr-error { font-size: 12.5px; color: #b05a4a; margin-top: 8px; }
+.qr-loading { font-size: 12.5px; color: var(--c-text-2); }
+.qr-url { font-size: 12.5px; color: var(--c-text-2); word-break: break-all; }
+.qr-error { font-size: 12.5px; color: var(--c-danger); margin-top: 8px; }
 
 .app-main {
   flex: 1;
@@ -601,44 +594,21 @@ body {
 @media (max-width: 420px) {
   .logo { font-size: 17px; }
 }
-
-.ghost-btn {
-  border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
-  color: var(--r-ink, #3a3128);
-  border-radius: 9px;
-  padding: 7px 14px;
-  font-size: 13.5px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
-}
-.ghost-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff));
-  border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent);
-}
-.ghost-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.ghost-btn.small { padding: 5px 11px; font-size: 12.5px; }
 .ghost-btn.tiny { padding: 3px 9px; font-size: 12px; }
-.ghost-btn.on {
-  background: var(--r-accent, #8a4b3a);
-  border-color: transparent;
-  color: #fff;
-}
 
 .dark-btn {
   border: none;
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
   border-radius: 9px;
   padding: 9px 18px;
   font-size: 14px;
   font-family: inherit;
   cursor: pointer;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
   transition: background-color .15s ease, box-shadow .15s ease;
 }
-.dark-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 84%, #000); }
+.dark-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 84%, #000); }
 .dark-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 .dark-btn.small { padding: 6px 13px; font-size: 13px; }
 
@@ -647,14 +617,14 @@ body {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 12px;
   padding: 10px 16px; border-radius: 999px;
-  background: #2b2f36; color: #fff; font-size: 14px;
+  background: #2b2f36; color: var(--c-text-on-accent); font-size: 14px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
   z-index: 900;
 }
 .rb-icon { flex-shrink: 0; }
 .rb-text { line-height: 1.5; }
 .rb-close {
-  border: none; background: rgba(255, 255, 255, .18); color: #fff;
+  border: none; background: rgba(255, 255, 255, .18); color: var(--c-text-on-accent);
   padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 13px;
   font-family: inherit;
 }

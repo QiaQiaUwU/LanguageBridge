@@ -67,3 +67,6 @@ Thumbs.db
 .env
 .env.local
 *.local.json
+
+*.bat
+*.vbs

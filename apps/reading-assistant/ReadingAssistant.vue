@@ -3,12 +3,10 @@
     <div class="reader-wrap">
 
     <div v-if="article" class="article-view">
-      <button class="back-to-list" @click="readerStore.selectArticle(null)">← 返回文章列表</button>
+      <BackLink label="文章列表" @back="readerStore.selectArticle(null)" />
 
       <div v-if="article.chapters?.length" class="chapter-toc" :class="{ folded: tocFolded }">
-        <button class="toc-fold" @click="tocFolded = !tocFolded">
-          {{ tocFolded ? `目录 ${article.chapters.length}` : '收起 ›' }}
-        </button>
+        <FoldToggle v-model:folded="tocFolded" class="toc-fold" side="right" :label="`目录 ${article.chapters.length}`" />
         <div v-if="!tocFolded" class="toc-scroll">
           <button
             v-for="ch in article.chapters"
@@ -22,9 +20,7 @@
             <span v-if="article.lastChapter === ch.sentenceIndex" class="toc-mark" title="上次读到这里">🔖</span>
           </button>
 
-          <button class="toc-add" title="把别的文章作为新章节加到这本书末尾" @click="showAppendPicker = true">
-            + 添加章节
-          </button>
+          <button class="toc-add" title="添加章节" @click="showAppendPicker = true">＋</button>
         </div>
       </div>
 
@@ -43,26 +39,27 @@
         <div v-if="!bookSideFolded" class="bs-resizer" @pointerdown="startBookResize"></div>
         <div class="bs-head">
           <span v-if="!bookSideFolded" class="bs-title">{{ currentBook.name }}</span>
-          <button class="bs-fold" :title="bookSideFolded ? '展开目录' : '收起目录'" @click="bookSideFolded = !bookSideFolded">
-            {{ bookSideFolded ? `目录 ${bookChapters.length}` : '‹' }}
-          </button>
+          <FoldToggle v-model:folded="bookSideFolded" class="bs-fold" :label="`目录 ${bookChapters.length}`" />
         </div>
 
         <template v-if="!bookSideFolded">
           <div class="bs-search">
-            <input v-model="chapterSearch" placeholder="搜章节，输数字直接跳" />
+            <SearchBox v-model="chapterSearch" />
           </div>
 
-          <div class="bs-list">
-            <div v-for="(c, i) in shownChapters" :key="c.id" class="bs-slot">
-              <button
-                v-if="!chapterSearch && c.idx > 0"
-                class="bs-join up"
-                title="与上一章合并"
-                @click.stop="mergeChapters(c.idx - 1, c.idx)"
-              >+</button>
+          <!-- 与文章列表同一套交互：点击打开；长按或右键进入编辑，拖动排序，✎ 编辑，× 移出，末尾 ＋ -->
+          <div
+            :ref="chManage.bindList"
+            class="bs-list ui-manage"
+            :class="{ editing: chManage.editing.value }"
+          >
+            <div
+              v-for="(c, i) in shownChapters"
+              :key="c.id"
+              class="bs-slot ui-manage-item"
+              v-bind="chManage.itemAttrs(i)"
+            >
 
-              <!-- 章节名改成可以双击重命名，右侧给一个删除 -->
               <input
                 v-if="renamingChapter === c.idx"
                 ref="chapterRenameInput"
@@ -72,58 +69,57 @@
                 @keydown.esc="renamingChapter = -1"
                 @blur="commitChapterRename(c.idx)"
               />
-              <!-- 章节也能拖着换顺序，跟文章列表一个手感 -->
-              <button
+              <div
                 v-else
                 class="bs-item"
-                :class="{ on: c.idx === bookIndex, 'drop-before': chDropIdx === c.idx && chDropAfter === false, 'drop-after': chDropIdx === c.idx && chDropAfter === true }"
-                draggable="true"
-                @click="gotoBookChapter(c.idx)"
-                @dblclick.stop="startChapterRename(c.idx, c.title)"
-                @dragstart="onChDragStart(c.idx, $event)"
-                @dragover.prevent="onChDragOver(c.idx, $event)"
-                @dragleave="onChDragLeave(c.idx)"
-                @drop.prevent="onChDrop(c.idx)"
-                @dragend="onChDragEnd"
+                :class="{ on: c.idx === bookIndex }"
+                role="button"
+                @click="chManage.guardClick(() => gotoBookChapter(c.idx))"
               >
                 <span class="bs-no">{{ c.idx + 1 }}.</span>
-                <!-- 正在播的那一章挂个喇叭：整本循环会自己跳章，
-                     不给个标记的话不知道现在放到哪本书的哪一章了 -->
                 <span v-if="playingChapterIdx === c.idx" class="bs-speaker" title="正在播放">
-                  <svg viewBox="0 0 24 24" width="12" height="12">
-                    <path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/>
-                  </svg>
+                  <i class="ri-volume-up-line"></i>
                 </span>
-                <span class="bs-name" title="双击可以改名">{{ c.title }}</span>
+                <span class="bs-name">{{ c.title }}</span>
                 <span class="bs-cnt">{{ c.sentences.length }}</span>
-                <span class="bs-ops">
-                  <span class="bs-op" title="上移" @click.stop="moveChapter(c.idx, -1)">↑</span>
-                  <span class="bs-op" title="下移" @click.stop="moveChapter(c.idx, 1)">↓</span>
-                  <span class="bs-op" :class="{ hot: chapterFlag(c.idx, 'pinned') }" title="置顶" @click.stop="toggleChapterFlag(c.idx, 'pinned')">顶</span>
-                  <span class="bs-op" :class="{ hot: chapterFlag(c.idx, 'starred') }" title="收藏" @click.stop="toggleChapterFlag(c.idx, 'starred')">★</span>
-                  <span class="bs-op" title="改名" @click.stop="startChapterRename(c.idx, c.title)">改名</span>
-                  <span class="bs-op danger" title="移出这本书" @click.stop="removeChapter(c.idx)">移出</span>
+                <span class="bs-ops" data-no-drag>
+                  <template v-if="chManage.editing.value">
+                    <button
+                      class="ui-icon-btn sm"
+                      :class="{ on: chapterFlag(c.idx, 'pinned') }"
+                      title="置顶"
+                      @click.stop="toggleChapterFlag(c.idx, 'pinned')"
+                    ><i :class="chapterFlag(c.idx, 'pinned') ? 'ri-pushpin-fill' : 'ri-pushpin-line'"></i></button>
+                    <button class="ui-icon-btn sm" title="编辑" @click.stop="startChapterRename(c.idx, c.title)"><i class="ri-edit-line"></i></button>
+                    <CloseButton small title="移出" @click="removeChapter(c.idx)" />
+                  </template>
+                  <StarToggle
+                    v-else
+                    small
+                    :model-value="chapterFlag(c.idx, 'starred')"
+                    @update:model-value="toggleChapterFlag(c.idx, 'starred')"
+                  />
                 </span>
-              </button>
+              </div>
 
               <button
-                v-if="!chapterSearch && c.idx < bookChapters.length - 1"
-                class="bs-join down"
+                v-if="chManage.editing.value && !chapterSearch && i < shownChapters.length - 1"
+                class="bs-join"
                 title="与下一章合并"
+                data-no-drag
                 @click.stop="mergeChapters(c.idx, c.idx + 1)"
-              >+</button>
+              ><i class="ri-link"></i></button>
             </div>
-            <p v-if="!shownChapters.length" class="bs-empty">没有匹配的章节</p>
+            <EmptyState v-if="!shownChapters.length" />
 
-            <!-- 目录末尾：从已有文章里挑一篇加进来当章节 -->
-            <button class="bs-add" @click="showChapterPicker = true">
-              <span class="nb-plus">+</span> 添加章节
-            </button>
-            <!-- 一次选一堆音频，自动跟章节配对 -->
-            <label class="bs-add">
-              <span class="nb-plus">♪</span> 批量导入音频
-              <input type="file" accept="audio/*,video/*" multiple hidden @change="onBatchAudio" />
-            </label>
+            <div class="bs-foot">
+              <button v-if="chManage.editing.value" class="ghost-btn small" @click="chManage.exit()">完成</button>
+              <button class="ui-icon-btn" title="添加章节" @click="showChapterPicker = true"><i class="ri-add-line"></i></button>
+              <label class="ui-icon-btn" title="批量导入音频">
+                <i class="ri-music-2-line"></i>
+                <input type="file" accept="audio/*,video/*" multiple hidden @change="onBatchAudio" />
+              </label>
+            </div>
           </div>
         </template>
       </aside>
@@ -145,9 +141,9 @@
             </div>
           </div>
           <div class="picker-head">
-            <span class="pi-cnt">确认后会逐个导入并排队对轴</span>
+            <span class="pi-cnt">{{ audioPairs.length }} 对</span>
             <button class="dark-btn small" :disabled="!audioPairs.length" @click="confirmBatchAudio">
-              确认导入
+              导入
             </button>
           </div>
         </div>
@@ -160,7 +156,7 @@
             <strong>添加章节到《{{ currentBook?.title }}》</strong>
             <button class="ghost-btn small" @click="showChapterPicker = false">关闭</button>
           </div>
-          <input v-model="chapterPickSearch" class="picker-search" placeholder="搜索文章标题" />
+          <input v-model="chapterPickSearch" class="picker-search" placeholder="搜索" />
           <div class="picker-list">
             <button
               v-for="a in pickableArticles"
@@ -171,7 +167,7 @@
               <span class="pi-title">{{ a.title }}</span>
               <span class="pi-cnt">{{ a.sentences.length }} 句</span>
             </button>
-            <p v-if="!pickableArticles.length" class="bs-empty">没有可添加的文章</p>
+            <p v-if="!pickableArticles.length" class="bs-empty">暂无</p>
           </div>
         </div>
       </div>
@@ -197,15 +193,9 @@
           @keyup.enter="saveTitle"
         />
         <h2 v-else class="article-title" @click="startEditTitle">{{ article.title }}</h2>
-        <button v-if="!editingTitle" class="title-edit-btn" title="重命名" @click="startEditTitle">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-        </button>
-        <button class="title-bookmark-btn" :class="{ on: article.bookmarked }" title="标为正在看/要看" @click="toggleBookmark(article)">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 2h12a1 1 0 0 1 1 1v18l-7-4-7 4V3a1 1 0 0 1 1-1z"/></svg>
-        </button>
-        <button class="title-completed-btn" :class="{ on: article.completed }" title="标为已学完" @click="toggleCompleted(article)">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>
-        </button>
+        <button v-if="!editingTitle" class="ui-icon-btn" title="编辑" @click="startEditTitle"><i class="ri-edit-line"></i></button>
+        <BookmarkToggle :model-value="!!article.bookmarked" @update:model-value="toggleBookmark(article)" />
+        <DoneToggle :model-value="!!article.completed" @update:model-value="toggleCompleted(article)" />
       </div>
       <p class="meta">共 {{ article.sentences.length }} 句 · {{ englishWordCount }} 词</p>
 
@@ -222,7 +212,8 @@
         </button>
         <!-- 「复述练习」按钮去掉了：跟读模式里把英文关掉就是复述，
              不该是两个并列的模式。 -->
-        <button class="ghost-btn" :class="{ on: viewSubMode === 'shadow' }" title="放一句原声，自己跟一句，录下来对比" @click="viewSubMode = viewSubMode === 'shadow' ? 'read' : 'shadow'">跟读模式</button>
+        <button class="ghost-btn" :class="{ on: viewSubMode === 'shadow' }" title="跟读" @click="viewSubMode = viewSubMode === 'shadow' ? 'read' : 'shadow'">跟读</button>
+        <button class="ghost-btn" title="逐句听写" @click="$router.push(`/dictation/article/${article.id}`)">听写</button>
         <!-- 导入音频/视频的入口原来只在右下角 AI 面板的动作列表里，找不到。放到顶栏。 -->
         <button class="ghost-btn" :class="{ on: viewSubMode === 'audioAlign' }" @click="viewSubMode = viewSubMode === 'audioAlign' ? 'read' : 'audioAlign'">音频 / 视频</button>
       </div>
@@ -258,11 +249,11 @@
               </select>
             </div>
             <div class="sb-play">
-              <button class="ghost-btn small" title="上一句" @click="jumpShadow(playingIdx - 1)">‹</button>
+              <button class="ui-icon-btn" title="上一句" @click="jumpShadow(playingIdx - 1)"><i class="ri-arrow-left-s-line"></i></button>
               <button class="dark-btn small play-btn" @click="toggleContinuous">
                 {{ continuousOn ? '⏸' : '▶' }}
               </button>
-              <button class="ghost-btn small" title="下一句" @click="jumpShadow(playingIdx + 1)">›</button>
+              <button class="ui-icon-btn" title="下一句" @click="jumpShadow(playingIdx + 1)"><i class="ri-arrow-right-s-line"></i></button>
             </div>
             <span class="sb-right">
               <label class="sb-item" title="点播放 = 一句原声 + 一段留白，留白里自动录音">
@@ -480,7 +471,7 @@
             <span v-if="s.audioStart != null" class="align-time" @click="jumpAudioTo(s.audioStart)">{{ s.audioStart.toFixed(1) }}s</span>
             <button class="ghost-btn small" @click="markSentenceStart(i)">标记开始</button>
           </div>
-          <button class="ghost-btn small" @click="markLastSentenceEnd">最后一句到此结束（标到音频末尾）</button>
+          <button class="ghost-btn small" @click="markLastSentenceEnd">标记结尾</button>
         </div>
       </div>
 
@@ -531,7 +522,7 @@
             @contextmenu.prevent="defaultHl = c.name"
           ></span>
           <button @click="copySelection">复制</button>
-          <button @click="analyzeSentenceGrammar" :disabled="!aiReady" :title="aiReady ? '' : '请先在设置里配置 API Key'">语法分析</button>
+          <button @click="analyzeSentenceGrammar" :disabled="!aiReady" :title="aiReady ? '' : '未配置 API Key'">语法分析</button>
         </div>
       </div>
 
@@ -551,8 +542,7 @@
 
       <div v-if="sectionSplitPrompt" class="save-vocab-overlay" @click.self="sectionSplitPrompt = null">
         <div class="save-vocab-box section-split-box">
-          <p class="svb-word">"{{ sectionSplitPrompt.file.name }}" 里识别到 {{ sectionSplitPrompt.sections.length }} 个章节</p>
-          <p class="s-label">拆开导入会存成 {{ sectionSplitPrompt.sections.length }} 篇文章，自动归到一个新分组；整篇导入还是跟以前一样存成一篇。识别不一定100%准，存完可以在文章列表里删掉/合并多余的。</p>
+          <p class="svb-word">{{ sectionSplitPrompt.file.name }} · {{ sectionSplitPrompt.sections.length }} 章</p>
           <div class="section-chip-list">
             <span v-for="s in sectionSplitPrompt.sections" :key="s.title" class="section-chip">{{ s.title }}</span>
           </div>
@@ -571,7 +561,7 @@
         <div class="side-body-scroll">
           <section class="notes-box">
             <div v-if="chapterCount > 1" class="notes-pager">
-              <button class="np-btn" :disabled="chapterPage <= 0" @click="gotoNotePage(chapterPage - 1)">‹</button>
+              <button class="ui-icon-btn" :disabled="chapterPage <= 0" @click="gotoNotePage(chapterPage - 1)" title="上一页"><i class="ri-arrow-left-s-line"></i></button>
               <!-- 选项要用 notePageTitles：书的章节在 bookChapters 里，
                    而这里原来读的是 article.chapters（旧模型的分章），
                    书里那个是空的 —— 分页器显示出来了却一个选项都没有。
@@ -586,13 +576,13 @@
                   第 {{ i + 1 }}/{{ chapterCount }} 页 · {{ t }}
                 </option>
               </select>
-              <button class="np-btn" :disabled="chapterPage >= chapterCount - 1" @click="gotoNotePage(chapterPage + 1)">›</button>
+              <button class="ui-icon-btn" :disabled="chapterPage >= chapterCount - 1" @click="gotoNotePage(chapterPage + 1)" title="下一页"><i class="ri-arrow-right-s-line"></i></button>
             </div>
             <div
               ref="notesEditorEl"
               class="notes-area"
               contenteditable="true"
-              data-placeholder="可手动记录笔记，点上面「AI生成」，或在正文里划线——划到的内容会自动整理到这里，点里面的词能跳回原文位置"
+              data-placeholder="笔记"
               @input="onNotesInput"
               @blur="saveNotes"
               @click="onNotesAreaClick"
@@ -623,11 +613,10 @@
       </div>
     </div>
 
-    <div v-if="batchMessage" class="lb-toast" @click="batchMessage = ''">{{ batchMessage }}</div>
 
     <aside v-if="!article" class="article-list-view">
       <div class="search-row">
-        <input v-model="articleSearch" class="list-search" placeholder="搜索标题或正文…" />
+        <input v-model="articleSearch" class="list-search" placeholder="搜索" />
       </div>
 
       <div class="list-toolbar">
@@ -637,15 +626,15 @@
           <option v-for="g in readerStore.groups" :key="g.id" :value="g.id">{{ g.name }}（{{ groupCount(g.id) }}）</option>
         </select>
         <button class="ghost-btn" @click="showGroupManager = true">管理分组</button>
-        <button class="ghost-btn" v-if="!selectMode" @click="selectMode = true">选择模式</button>
+        <button class="ghost-btn" v-if="!selectMode" @click="selectMode = true">选择</button>
         <button class="ghost-btn" :disabled="restoringFromBackend" :title="restoreMessage" @click="doRestoreFromBackend">
           {{ restoringFromBackend ? '恢复中…' : '从后端恢复' }}
         </button>
-        <button class="dark-btn" @click="showImportPanel = !showImportPanel">{{ showImportPanel ? '收起导入' : '+ 新建/导入文章' }}</button>
+        <button class="dark-btn" title="新建 / 导入文章" @click="showImportPanel = !showImportPanel">{{ showImportPanel ? '收起' : '＋' }}</button>
       </div>
       <p v-if="restoreMessage" class="restore-message">{{ restoreMessage }}</p>
       <div v-if="showNewGroupInput" class="new-group-row">
-        <input v-model="newGroupName" placeholder="分组名称，比如「小红书沉浸式背单词」" @keyup.enter="doCreateGroup" />
+        <input v-model="newGroupName" placeholder="分组名称" @keyup.enter="doCreateGroup" />
         <button class="ghost-btn small" @click="doCreateGroup">创建</button>
       </div>
 
@@ -653,10 +642,10 @@
         <textarea
           v-model="pasteText"
           class="paste-area"
-          placeholder="粘贴文章内容（纯英文，或按行/按段落交替的中英对照文本）"
+          placeholder="正文"
         ></textarea>
         <div class="import-row">
-          <input v-model="pasteTitle" class="title-input" placeholder="文章标题（可选）" />
+          <input v-model="pasteTitle" class="title-input" placeholder="标题" />
           <select v-model="pasteGroupId" class="list-select">
             <option value="">不分组</option>
             <option v-for="g in readerStore.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
@@ -669,27 +658,26 @@
           @dragleave="fileDropActive = false"
           @drop.prevent="onFileDrop"
         >
-          <div class="dz-main">{{ importingFile ? '正在解析文件…' : '把文件拖到这里，或' }}</div>
+          <div v-if="importingFile" class="dz-main">解析中…</div>
           <div class="dz-actions">
             <label class="file-btn">
-              选择文件（可多选）
+              选择文件
               <input type="file" multiple :accept="SUPPORTED_ARTICLE_EXTS" hidden :disabled="importingFile" @change="onFilePick" />
             </label>
           </div>
-          <span class="hint">TXT / MD / HTML / DOCX / PDF</span>
         </div>
         <div class="import-row">
-          <input v-model="urlInput" class="url-input" placeholder="或输入网址抓取正文…" @keyup.enter="fetchUrl" />
-          <button class="dark-btn" :disabled="fetchingUrl" @click="fetchUrl">{{ fetchingUrl ? '抓取中…' : '抓取网页' }}</button>
+          <input v-model="urlInput" class="url-input" placeholder="网址" @keyup.enter="fetchUrl" />
+          <button class="dark-btn" :disabled="fetchingUrl" @click="fetchUrl">{{ fetchingUrl ? '抓取中…' : '抓取' }}</button>
         </div>
         <p v-if="urlError" class="err-text">{{ urlError }}</p>
-        <button class="start-btn" :disabled="!pasteText.trim()" @click="createFromPaste">导入并开始学习</button>
+        <button class="start-btn" :disabled="!pasteText.trim()" @click="createFromPaste">导入</button>
       </div>
 
       <div v-if="selectedIds.size" class="batch-bar">
         <span>已选 {{ selectedIds.size }} 篇</span>
         <select v-model="batchMoveTarget" class="list-select">
-          <option value="">移动到…</option>
+          <option value="">移动到</option>
           <option value="none">未分组</option>
           <option v-for="g in readerStore.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
         </select>
@@ -699,16 +687,16 @@
         </button>
         <button v-if="batchCleaning" class="ghost-btn small danger" title="停止，已完成的部分保留" @click="unstickBatch">停止</button>
         <button class="ghost-btn small" :disabled="selectedIds.size < 2 || merging" @click="openMergeDialog">
-          {{ merging ? '合并中…' : '合成一本书' }}
+          {{ merging ? '合并中…' : '合并成书' }}
         </button>
-        <button class="ghost-btn small danger" @click="doBatchDelete">删除选中</button>
-        <button class="ghost-btn small" @click="selectedIds.clear()">取消选择</button>
+        <button class="ghost-btn small danger" @click="doBatchDelete">删除</button>
+        <button class="ghost-btn small" @click="selectedIds.clear()">取消</button>
       </div>
 
       <div v-if="selectMode" class="select-mode-bar">
         <span>选择模式</span>
-        <button class="ghost-btn small" @click="selectAll">全选（当前列表 {{ filteredArticles.length }} 篇）</button>
-        <button class="ghost-btn small" @click="exitSelectMode">完成（退出选择模式）</button>
+        <button class="ghost-btn small" @click="selectAll">全选（{{ filteredArticles.length }}）</button>
+        <button class="ghost-btn small" @click="exitSelectMode">完成</button>
       </div>
       <div class="article-list" :class="{ selecting: selectMode }">
         <div
@@ -744,12 +732,8 @@
               @click.stop="onRowClick(a.id, $event)"
             />
             <span v-else class="a-lead-ph"></span>
-            <button class="a-bookmark" :class="{ on: a.bookmarked }" title="标为正在看/要看（会置顶）" @click.stop="toggleBookmark(a)">
-              <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 2h12a1 1 0 0 1 1 1v18l-7-4-7 4V3a1 1 0 0 1 1-1z"/></svg>
-            </button>
-            <button class="a-completed" :class="{ on: a.completed }" title="标为已学完" @click.stop="toggleCompleted(a)">
-              <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>
-            </button>
+            <BookmarkToggle small :model-value="!!a.bookmarked" @update:model-value="toggleBookmark(a)" />
+            <DoneToggle small :model-value="!!a.completed" @update:model-value="toggleCompleted(a)" />
           </div>
           <template v-if="editingListTitleId === a.id">
             <input
@@ -763,7 +747,7 @@
               @keyup.esc="cancelListTitleEdit"
             />
             <button class="a-rename-confirm" @click.stop="saveListTitle(a)">✓</button>
-            <button class="a-rename-cancel" @click.stop="cancelListTitleEdit">✕</button>
+            <CloseButton class="a-rename-cancel" @click="cancelListTitleEdit" small />
           </template>
           <span
             v-else
@@ -812,18 +796,16 @@
           v-if="filteredArticles.length"
           class="new-book-box"
           :class="{ hot: newBookHot }"
+          title="新建书"
           @click="createEmptyBook"
           @dragover.prevent="newBookHot = true"
           @dragleave="newBookHot = false"
           @drop.prevent="onDropToNewBook"
         >
-          <span class="nb-plus">+</span>
-          <span>新建一本书{{ draggingId ? '（把文章拖进来）' : '' }}</span>
+          <i class="ri-add-line nb-plus"></i>
         </button>
 
-        <p v-if="!filteredArticles.length" class="empty-hint">
-          {{ readerStore.articles.length ? '这个分组/搜索下没有文章' : '还没有文章，点上面"新建/导入文章"开始' }}
-        </p>
+        <EmptyState v-if="!filteredArticles.length" />
       </div>
     </aside>
     </div>
@@ -839,7 +821,7 @@
             <button class="ghost-btn small" @click="renameGroupById(g.id, g.name)">改名</button>
             <button class="ghost-btn small danger" @click="deleteGroupById(g.id, g.name)">删除</button>
           </div>
-          <p v-if="!readerStore.groups.length" class="append-empty">还没有分组</p>
+          <p v-if="!readerStore.groups.length" class="append-empty">暂无</p>
         </div>
         <div class="merge-actions">
           <input v-model="newGroupName" class="list-search" placeholder="新分组名称" @keydown.enter="doCreateGroup" />
@@ -880,7 +862,7 @@
             <span class="ai-title">{{ a.title }}</span>
             <span class="ai-meta">{{ a.sentences.length }} 句</span>
           </button>
-          <p v-if="!appendCandidates.length" class="append-empty">没有别的文章可以加</p>
+          <p v-if="!appendCandidates.length" class="append-empty">暂无</p>
         </div>
         <button class="ghost-btn small" @click="showAppendPicker = false">取消</button>
       </div>
@@ -892,7 +874,7 @@
       <div class="rc-card">
         <div class="rc-head">
           <h3>录音对比</h3>
-          <button class="icon-btn" title="关闭" @click="showRecCompare = false">×</button>
+          <CloseButton class="icon-btn" title="关闭" @click="showRecCompare = false" small />
         </div>
         <p class="rc-sum">{{ recCompareSummary || '这篇还没对过轴，只能看自己每句读了多久' }}</p>
 
@@ -942,7 +924,9 @@ import { useAgentChatStore } from '@/shared/stores/agentChatStore'
 import { readingSidePanelOpen as sidePanelOpen, readingArticleTitle } from '@/shared/core/readingPanelState'
 import { openWordLookup, setCollectMarkHook } from '@/shared/core/wordLookup'
 import { alignJobs } from '@/shared/core/alignJob'
-import { taskFor, startTask, updateTask, finishTask, failTask, endTask } from '@/shared/core/taskCenter'
+import { taskFor, startTask, updateTask, finishTask, failTask, endTask, tasks, tickTask } from '@/shared/core/taskCenter'
+import { toast } from '@/shared/core/toast'
+import { useManageList, moveItem } from '@/shared/core/useManageList'
 import WordLookupPopover from '@/apps/word-core/components/WordLookupPopover.vue'
 import * as be from '@/shared/core/backendClient'
 import { pickArticleAudioFile, getArticleAudio, getArticleAudioFile, clearArticleAudio, audioPickerSupported, saveArticleAudioBlob } from '@/shared/core/audioAlign'
@@ -1119,6 +1103,10 @@ const urlError = ref('')
 const fetchingUrl = ref(false)
 const importingFile = ref(false)
 const batchMessage = ref('')
+/** 页面不再自己画通知，统一交给右下角 CornerStack */
+watch(batchMessage, v => {
+  if (v) toast(v, /失败|出错|错误/.test(v) ? 'error' : 'info', 6000)
+})
 
 function splitToSentences(raw: string, titleForCleanup: string): { sentences: ArticleSentence[]; looksLikeRawTranscript: boolean } {
   // 纯中文稿：没有英文可配对，按中文句号断句，英文一栏留空等翻译。
@@ -1574,56 +1562,26 @@ const shownChapters = computed(() => {
 })
 
 /**
- * 章节拖动排序。
- *
- * 跟文章列表同一套做法：落在上半是排到前面，下半是排到后面。
- * 顺序直接写回书的 chapterIds，那本来就是个有序数组。
+ * 章节拖动排序：统一用 useManageList（Pointer Events），原生 draggable 在 button 上拖不动。
+ * 列表显示顺序可能因置顶、搜索与 chapterIds 不同，所以按显示下标换回真实章节下标再移动。
  */
-const chDragIdx = ref(-1)
-const chDropIdx = ref(-1)
-const chDropAfter = ref<boolean | null>(null)
-
-function onChDragStart(idx: number, e: DragEvent) {
-  chDragIdx.value = idx
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', String(idx))
-  }
-}
-
-function onChDragOver(idx: number, e: DragEvent) {
-  if (chDragIdx.value < 0 || idx === chDragIdx.value) return
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  chDropAfter.value = (e.clientY - r.top) / r.height > 0.5
-  chDropIdx.value = idx
-}
-
-function onChDragLeave(idx: number) {
-  if (chDropIdx.value === idx) { chDropIdx.value = -1; chDropAfter.value = null }
-}
-
-function onChDragEnd() {
-  chDragIdx.value = -1
-  chDropIdx.value = -1
-  chDropAfter.value = null
-}
-
-async function onChDrop(targetIdx: number) {
-  const from = chDragIdx.value
-  const after = chDropAfter.value
-  onChDragEnd()
-  if (from < 0 || from === targetIdx) return
-
+async function moveChapterTo(fromIdx: number, toIdx: number) {
   const book = currentBook.value
-  if (!book) return
-  const ids = [...(book.chapterIds || [])]
-  const moved = ids.splice(from, 1)[0]
-  // 摘掉一个之后，落点在原位之后的话下标要往前挪一位
-  let to = targetIdx + (after ? 1 : 0)
-  if (from < to) to--
-  ids.splice(Math.max(0, Math.min(ids.length, to)), 0, moved)
+  if (!book || fromIdx === toIdx) return
+  const ids = moveItem([...(book.chapterIds || [])], fromIdx, toIdx)
   await readerStore.saveArticle({ ...book, chapterIds: ids })
 }
+
+const chManage = useManageList({
+  onMove: (from, to) => {
+    if (chapterSearch.value) return
+    const list = shownChapters.value
+    const f = list[from]?.idx
+    const t = list[to]?.idx
+    if (f == null || t == null) return
+    moveChapterTo(f, t)
+  }
+})
 
 /**
  * 章节排序 / 置顶 / 收藏。
@@ -1803,14 +1761,14 @@ async function removeChapter(idx: number) {
   const book = currentBook.value
   const ch = bookChapters.value[idx]
   if (!book || !ch) return
-  if (!confirm(`把《${ch.title}》移出《${book.title}》？文章不会被删除，会回到文章列表。`)) return
+  if (!confirm(`移出《${ch.title}》？`)) return
 
   const ids = (book.chapterIds || []).filter(id => id !== ch.id)
   await readerStore.saveArticle({ ...book, chapterIds: ids })
 
   const art = readerStore.articles.find(x => x.id === ch.id)
   if (art) await readerStore.saveArticle({ ...art, partOfBook: undefined })
-  batchMessage.value = `《${ch.title}》已移出，回到文章列表`
+  batchMessage.value = `已移出《${ch.title}》`
 }
 
 async function gotoBookChapter(i: number) {
@@ -2678,6 +2636,8 @@ async function cleanupOne(a: Article, force = false) {
       try {
         const sentences = await aiReorganizeTranscript(raw, (done, total) => {
           cleanupProgress.value = total > 1 ? `${done}/${total}` : ''
+          updateTask(taskId, { detail: cleanupProgress.value || '整理中', ratio: total ? done / total : undefined })
+          tickTask(taskId)
         }, () => cancelCleanup.value)
         if (sentences.length) {
           const remarks = reanchorMarks(a.marks, sentences)
@@ -2976,10 +2936,14 @@ async function cleanupOne(a: Article, force = false) {
   } finally {
     cleaningOneId.value = ''
     cleanupProgress.value = ''
+    const t = tasks.find(x => x.id === taskId)
     if (cancelCleanup.value) {
-      batchMessage.value = '已停止整理。已经补好的部分都保留了，再点一次会接着补没补完的。'
+      batchMessage.value = '已停止整理'
       cancelCleanup.value = false
       endTask(taskId)   // 用户主动停的，不用留痕
+    } else if (t && t.status === 'running') {
+      // 混排分支、纯中文分支成功后是提前 return 的，之前漏了收尾，任务一直停在「在跑」
+      finishTask(taskId, '完成')
     }
   }
 }
@@ -4046,8 +4010,9 @@ const aligningId = ref('')
 async function doForcedAlign() {
   const a = article.value
   if (!a) return
-  const file = await getArticleAudioFile(a.id)
-  if (!file) { subMessage.value = '先关联音频再对齐'; return }
+  // 新关联的音频存在后端（audioUrl），旧的 getArticleAudioFile 只查 IndexedDB，永远取不到
+  const file = await currentAudioFile()
+  if (!file) { subMessage.value = '未关联音频'; return }
 
   w2vBusy.value = true
   aligningId.value = a.id
@@ -4130,8 +4095,8 @@ async function doTranscribe() {
   alignProgress.value = { msg: '准备…', ratio: 0 }
   subMessage.value = ''
   try {
-    const file = await getArticleAudioFile(a.id)
-    if (!file) throw new Error('先关联音频再转写')
+    const file = await currentAudioFile()
+    if (!file) throw new Error('未关联音频')
 
     const { decodeTo16k } = await import('@/shared/core/w2v2Aligner')
     const pcm = await decodeTo16k(file, (m, r) => { alignProgress.value = { msg: m, ratio: r ?? 0 } })
@@ -5051,9 +5016,8 @@ async function generateNotes() {
     .slice()
     .sort((a, b) => markOrderKey(a) - markOrderKey(b))
   if (!marks.length) {
-    notesDraft.value = notesDraft.value + '<p>这篇文章目前还没有划线标记的单词，先去正文里划几个再点这个按钮</p>'
-    syncNotesEditorFromDraft()
-    saveNotes()
+    // 原来把一句操作指引写进笔记正文并存盘，笔记被污染；改成状态提示
+    toast('无划线单词')
     return
   }
   generatingNotes.value = true
@@ -6305,14 +6269,14 @@ const articleQuickActionsComputed = computed<ArticleQuickAction[]>(() => {
     key: 'hardwords',
     label: '挑出这篇的难词',
     disabled: !aiReady.value,
-    title: aiReady.value ? '先过一遍最可能拦住你的词' : '请先在设置里配置 API Key',
+    title: aiReady.value ? '先过一遍最可能拦住你的词' : '未配置 API Key',
     run: askHardWords
   })
   actions.push({
     key: 'notes',
     label: generatingNotes.value ? 'AI生成笔记中…' : 'AI生成学习笔记',
     disabled: generatingNotes.value || !aiReady.value,
-    title: aiReady.value ? '' : '请先在设置里配置 API Key',
+    title: aiReady.value ? '' : '未配置 API Key',
     run: generateNotes
   })
   if (needsTranslation.value) {
@@ -6320,7 +6284,7 @@ const articleQuickActionsComputed = computed<ArticleQuickAction[]>(() => {
       key: 'translate',
       label: translating.value ? `AI翻译中 ${translateProgress.value.done}/${translateProgress.value.total}` : 'AI 翻译全文',
       disabled: translating.value || !aiReady.value,
-      title: aiReady.value ? '' : '请先在设置里配置 API Key',
+      title: aiReady.value ? '' : '未配置 API Key',
       run: translateAll
     })
   }
@@ -6329,7 +6293,7 @@ const articleQuickActionsComputed = computed<ArticleQuickAction[]>(() => {
       key: 'cleanup',
       label: cleaning.value ? 'AI整理中…' : 'AI整理成清晰文章',
       disabled: cleaning.value || !aiReady.value,
-      title: aiReady.value ? '' : '请先在设置里配置 API Key',
+      title: aiReady.value ? '' : '未配置 API Key',
       run: cleanupTranscript
     })
   }
@@ -6516,7 +6480,7 @@ watch(
 }
 
 .article-view {
-  background: var(--r-paper, transparent);
+  background: var(--c-surface);
   border-radius: 14px;
   padding: 20px 24px 30px;
   transition: background 0.2s;
@@ -6536,16 +6500,16 @@ watch(
   text-align: center;
 }
 .list-search {
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 9px 14px; font-size: 14px; outline: none; width: 220px;
+  border: 1px solid var(--c-line); border-radius: 8px; padding: 9px 14px; font-size: 14px; outline: none; width: 220px;
   &:focus { border-color: #999; }
 }
 .list-select {
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 9px 12px; font-size: 13.5px; outline: none; background: #fff;
+  border: 1px solid var(--c-line); border-radius: 8px; padding: 9px 12px; font-size: 13.5px; outline: none; background: #fff;
   &:focus { border-color: #999; }
 }
 .new-group-row { display: flex; gap: 8px; margin-bottom: 14px; }
 .new-group-row input {
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; outline: none; width: 260px;
+  border: 1px solid var(--c-line); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; outline: none; width: 260px;
   &:focus { border-color: #999; }
 }
 
@@ -6572,11 +6536,11 @@ watch(
 
 /* 拖拽落点提示：上下边缘是排序，整行高亮是"放进这本书" */
 .drop-line { position: absolute; left: 0; right: 0; pointer-events: none; }
-.drop-line.before { top: -1px; height: 2px; background: var(--r-accent, #8a4b3a); }
-.drop-line.after { bottom: -1px; height: 2px; background: var(--r-accent, #8a4b3a); }
+.drop-line.before { top: -1px; height: 2px; background: var(--c-accent); }
+.drop-line.after { bottom: -1px; height: 2px; background: var(--c-accent); }
 .drop-line.into {
-  inset: 0; border: 2px dashed var(--r-accent, #8a4b3a); border-radius: 8px;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 8%, transparent);
+  inset: 0; border: 2px dashed var(--c-accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
 }
 
 /* 列表末尾的新建书按钮 */
@@ -6584,15 +6548,15 @@ watch(
   width: 100%;
   display: flex; align-items: center; justify-content: center; gap: 8px;
   margin-top: 8px; padding: 14px;
-  border: 1.5px dashed var(--r-border, #d8dce1);
+  border: 1.5px dashed var(--c-line);
   border-radius: 10px;
   background: none; cursor: pointer;
   font-size: 13px; font-family: inherit;
-  color: var(--r-ink2, #9aa0a6);
+  color: var(--c-text-2);
   &:hover, &.hot {
-    border-color: var(--r-accent, #8a4b3a);
-    color: var(--r-accent, #8a4b3a);
-    background: color-mix(in srgb, var(--r-accent, #8a4b3a) 6%, transparent);
+    border-color: var(--c-accent);
+    color: var(--c-accent);
+    background: color-mix(in srgb, var(--c-accent) 6%, transparent);
   }
 }
 .nb-plus { font-size: 16px; }
@@ -6605,16 +6569,16 @@ watch(
   /* 高度固定成原来两行的高度，内容垂直居中；按钮多了横向裁掉，不再撑高。 */
   flex-wrap: nowrap; overflow: hidden;
   height: 64px; box-sizing: border-box;
-  border-bottom: 1px solid var(--r-border, #eee);
+  border-bottom: 1px solid var(--c-line);
   &:last-child { border-bottom: none; }
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, transparent); }
-  &.sel { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 11%, transparent); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 5%, transparent); }
+  &.sel { background: color-mix(in srgb, var(--c-accent) 11%, transparent); }
 }
 .back-to-list {
   border: none; background: none; cursor: pointer; padding: 4px 0;
-  font-size: 13px; color: var(--r-ink2, #888);
+  font-size: 13px; color: var(--c-text-2);
   transition: color .15s ease;
-  &:hover { color: var(--r-accent, #8a4b3a); }
+  &:hover { color: var(--c-accent); }
 }
 .a-lead {
   display: grid; grid-template-columns: 18px 20px 20px;
@@ -6644,10 +6608,10 @@ watch(
 }
 .book-badge {
   margin-left: 8px; padding: 1px 7px; border-radius: 999px;
-  background: var(--r-ui, #f0f2f5); color: var(--r-ink2, #8a9099);
+  background: var(--c-surface-2); color: var(--c-text-2);
   font-size: 11.5px; font-weight: 400;
 }
-.a-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--r-ink, #1a1a1a); font-size: 14.5px; &:hover { color: #555; text-decoration: underline; } }
+.a-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--c-text); font-size: 14.5px; &:hover { color: #555; text-decoration: underline; } }
 .a-title-edit {
   flex: 1; border: 1px solid #999; border-radius: 6px; padding: 4px 8px; font-size: 14.5px; outline: none;
 }
@@ -6658,7 +6622,7 @@ watch(
   content: '';
   position: absolute; left: 0; bottom: 0; height: 2px;
   width: var(--clean-pct, 30%);
-  background: var(--r-accent, #e8622a);
+  background: var(--c-accent);
   transition: width .3s ease;
 }
 .article-row.cleaning { position: relative; }
@@ -6700,7 +6664,7 @@ watch(
 .paste-area {
   width: 100%;
   min-height: 160px;
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 10px;
   padding: 14px;
   font-size: 14px;
@@ -6710,7 +6674,7 @@ watch(
   &:focus { border-color: #999; }
 }
 .title-input, .url-input {
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 8px;
   padding: 9px 12px;
   font-size: 14px;
@@ -6721,29 +6685,17 @@ watch(
 .import-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .url-input { flex: 1; }
 .file-btn {
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 8px;
   padding: 9px 16px;
   font-size: 14px;
   cursor: pointer;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent); }
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
+  &:hover { background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface)); border-color: color-mix(in srgb, var(--c-accent) 42%, transparent); }
 }
 .hint { color: #999; font-size: 12.5px; }
 .batch-msg { color: #4a7d3a; font-size: 13px; margin-bottom: 10px; }
 .err-text { color: #b05a4a; font-size: 13px; margin-bottom: 8px; }
-.start-btn {
-  border: none;
-  background: var(--r-accent, #8a4b3a);
-  color: #fff;
-  border-radius: 10px;
-  padding: 11px 26px;
-  font-size: 15px;
-  cursor: pointer;
-  margin-top: 6px;
-  &:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
-  &:disabled { opacity: 0.4; cursor: not-allowed; }
-}
 
 .toolbar {
   display: flex;
@@ -6752,25 +6704,13 @@ watch(
   gap: 10px;
   margin-bottom: 14px;
 }
-.seg { display: inline-flex; background: var(--r-ui, #f2f2f2); border-radius: 10px; padding: 4px; }
-.seg-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: none; background: none; padding: 7px 14px; border-radius: 8px; font-size: 13.5px; cursor: pointer; color: #444;
-  &.on { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-weight: 600; }
-}
-.ghost-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent); background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff)); border-radius: 8px; padding: 7px 14px; font-size: 13.5px; cursor: pointer; color: #444;
-  &:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); }
-  &:disabled { opacity: 0.45; cursor: not-allowed; }
-  &.on { background: var(--r-accent, #8a4b3a); color: #fff; border-color: transparent; }
-}
+.seg { display: inline-flex; background: var(--c-surface-2); border-radius: 10px; padding: 4px; }
 .file-import-btn { display: inline-flex; align-items: center; }
 .dark-btn {
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
   transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: none; background: var(--r-accent, #8a4b3a); color: #fff; border-radius: 8px; padding: 8px 16px; font-size: 13.5px; cursor: pointer;
-  &:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
+  border: none; background: var(--c-accent); color: #fff; border-radius: 8px; padding: 8px 16px; font-size: 13.5px; cursor: pointer;
+  &:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
   &:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
@@ -6782,8 +6722,8 @@ watch(
   bottom: 14px;
   max-width: calc(100vw - var(--lb-nav-w, 178px) - 3rem);
   display: flex; flex-direction: column;
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e2e2e2);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   border-radius: 12px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, .07);
   overflow: hidden;
@@ -6793,51 +6733,35 @@ watch(
 .bs-resizer {
   position: absolute; right: -3px; top: 0; bottom: 0; width: 8px;
   cursor: col-resize; z-index: 3;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 25%, transparent); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 25%, transparent); }
 }
 .bs-head {
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding: 0.7rem 0.8rem; border-bottom: 1px solid var(--r-border, #f0f0f0);
+  padding: 0.7rem 0.8rem; border-bottom: 1px solid var(--c-line);
 }
 .bs-title {
-  font-size: 0.95rem; font-weight: 600; color: var(--r-ink, #1f2328);
+  font-size: 0.95rem; font-weight: 600; color: var(--c-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.bs-fold {
-  flex-shrink: 0; border: none; background: none; cursor: pointer;
-  color: var(--r-ink2, #9aa0a6); font-size: 0.85rem; padding: 0 0.2rem;
-  &:hover { color: var(--r-ink, #1f2328); }
-}
+.bs-fold { flex-shrink: 0; }
 /* 搜索框对应它的 .search，列表 gap 1rem 那一档 */
 .bs-search { padding: 0.6rem 0.7rem 0; }
-.bs-search input {
-  width: 100%; box-sizing: border-box;
-  padding: 0.45rem 0.6rem; font-size: 0.9rem;
-  border: 1px solid var(--r-border, #e5e7eb); border-radius: 0.5rem;
-  background: var(--r-paper, #fff); color: var(--r-ink, #1f2328); outline: none;
-  &:focus { border-color: var(--r-accent, #8a4b3a); }
-}
-.bs-empty { color: var(--r-ink2, #9aa0a6); font-size: 0.85rem; padding: 0.6rem 0.8rem; }
 .bs-list { flex: 1; overflow-y: auto; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; }
 /* 每条外面套一层，用来放上下两个 + */
 .bs-slot { position: relative; }
 .bs-join {
-  position: absolute; left: 50%; transform: translateX(-50%);
-  width: 1.5rem; height: 1.1rem; line-height: 1;
-  border: 1px solid var(--r-border, #dfe3e8); border-radius: 999px;
-  background: var(--r-paper, #fff); color: var(--r-ink2, #9aa0a6);
-  font-size: 12px; cursor: pointer; z-index: 2;
-  opacity: 0; transition: opacity .12s ease;
-  &.up { top: -0.55rem; }
-  &.down { bottom: -0.55rem; }
-  &:hover { color: var(--r-accent, #8a4b3a); border-color: var(--r-accent, #8a4b3a); }
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 16px; margin: 1px auto; padding: 0;
+  border: 1px dashed var(--c-line); border-radius: var(--radius-full);
+  background: var(--c-surface); color: var(--c-text-3);
+  font-size: var(--text-2xs); cursor: pointer;
+  &:hover { color: var(--c-accent); border-color: var(--c-accent); border-style: solid; }
 }
-.bs-slot:hover .bs-join { opacity: 1; }
 
 /* 正在播放的章节标记 */
 .bs-speaker {
   display: inline-flex; flex-shrink: 0; margin-right: 4px;
-  color: var(--r-accent, #8a4b3a);
+  color: var(--c-accent);
   animation: spk 1.6s ease-in-out infinite;
 }
 @keyframes spk {
@@ -6845,23 +6769,11 @@ watch(
   50% { opacity: .45; }
 }
 
-/* 章节拖动的落点提示线 */
-.bs-item.drop-before { box-shadow: inset 0 2px 0 var(--r-accent, #8a4b3a); }
-.bs-item.drop-after { box-shadow: inset 0 -2px 0 var(--r-accent, #8a4b3a); }
 
-/* 目录末尾的「添加章节」 */
-.bs-add {
-  width: 100%; margin-top: 6px; padding: 9px;
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  border: 1.5px dashed var(--r-border, #d8dce1); border-radius: 8px;
-  background: none; cursor: pointer;
-  font-size: 12.5px; font-family: inherit; color: var(--r-ink2, #9aa0a6);
-  &:hover {
-    border-color: var(--r-accent, #8a4b3a); color: var(--r-accent, #8a4b3a);
-    background: color-mix(in srgb, var(--r-accent, #8a4b3a) 6%, transparent);
-  }
+.bs-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2xs);
+  margin-top: var(--space-xs); padding-top: var(--space-xs); border-top: 1px solid var(--c-line-soft);
 }
-
 /* 选文章弹窗 */
 .picker-mask {
   position: fixed; inset: 0; z-index: 3000;
@@ -6871,69 +6783,64 @@ watch(
 .picker-box {
   width: 460px; max-width: calc(100vw - 40px); max-height: 70vh;
   display: flex; flex-direction: column;
-  background: var(--r-paper, #fff); border-radius: 12px;
+  background: var(--c-surface); border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
   overflow: hidden;
 }
 .picker-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; border-bottom: 1px solid var(--r-border, #eee);
+  padding: 12px 14px; border-bottom: 1px solid var(--c-line);
 }
 .picker-search {
   margin: 10px 14px; padding: 7px 10px;
-  border: 1px solid var(--r-border, #e5e7eb); border-radius: 8px;
+  border: 1px solid var(--c-line); border-radius: 8px;
   font-size: 13px; font-family: inherit;
 }
 .picker-list { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
 .pair-row {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border-radius: 8px; font-size: 12.5px;
-  &:hover { background: var(--r-ui, #f2f4f7); }
+  &:hover { background: var(--c-surface-2); }
 }
-.pair-arrow { flex-shrink: 0; color: var(--r-ink2, #9aa0a6); }
+.pair-arrow { flex-shrink: 0; color: var(--c-text-2); }
 .pair-score {
-  flex-shrink: 0; font-size: 11.5px; color: #3a8a5c;
+  flex-shrink: 0; font-size: 11.5px; color: var(--c-success);
   &.weak { color: #b5843c; }
 }
 .picker-item {
   width: 100%; display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border: none; background: none; cursor: pointer;
   border-radius: 8px; font-size: 13px; font-family: inherit; text-align: left;
-  color: var(--r-ink, #1f2328);
-  &:hover { background: var(--r-ui, #f2f4f7); }
+  color: var(--c-text);
+  &:hover { background: var(--c-surface-2); }
 }
 .pi-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pi-cnt { flex-shrink: 0; color: var(--r-ink2, #9aa0a6); font-size: 12px; }
+.pi-cnt { flex-shrink: 0; color: var(--c-text-2); font-size: 12px; }
 
 /* 章节改名输入框，跟 bs-item 同宽同高，切换时不跳动 */
 .bs-rename {
   flex: 1; min-width: 0;
   padding: 6px 8px; border-radius: 8px;
-  border: 1px solid var(--r-accent, #8a4b3a);
+  border: 1px solid var(--c-accent);
   font-size: 0.95rem; font-family: inherit;
-  background: var(--r-paper, #fff); color: var(--r-ink, #1f2328);
+  background: var(--c-surface); color: var(--c-text);
 }
-.bs-ops { display: none; gap: 6px; margin-left: 6px; flex-shrink: 0; }
-.bs-item:hover .bs-ops { display: inline-flex; }
-.bs-op {
-  font-size: 11.5px; color: var(--r-ink2, #9aa0a6);
-  &:hover { color: var(--r-accent, #8a4b3a); }
-  &.danger:hover { color: #b5493c; }
-  /* 已置顶 / 已收藏的常亮，不用悬停也看得见 */
-  &.hot { color: var(--r-accent, #8a4b3a); }
-}
+.bs-ops { display: inline-flex; align-items: center; gap: 0; margin-left: var(--space-2xs); flex-shrink: 0; }
+/* 未收藏的星标平时隐藏，悬停才出现；已收藏常亮 */
+.bs-ops .ui-star:not(.on) { opacity: 0; transition: opacity var(--dur-base); }
+.bs-item:hover .bs-ops .ui-star { opacity: 1; }
 
 .bs-item {
   display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.55rem 0.7rem; border: none; border-radius: 0.5rem;
-  background: none; cursor: pointer; text-align: left;
-  font-size: 0.95rem; color: var(--r-ink2, #666);
-  &:hover { background: var(--r-ui, #f5f5f5); color: var(--r-ink, #222); }
-  &.on { background: var(--r-ui, #f0f2f5); color: var(--r-accent, #8a4b3a); font-weight: 600; }
+  padding: 0.4rem 0.4rem 0.4rem 0.7rem; border-radius: var(--radius-md);
+  cursor: pointer; text-align: left; user-select: none;
+  font-size: 0.95rem; color: var(--c-text-2);
+  &:hover { background: var(--c-surface-2); color: var(--c-text); }
+  &.on { background: var(--c-surface-2); color: var(--c-accent); font-weight: 600; }
 }
-.bs-no { flex-shrink: 0; width: 1.6rem; color: var(--r-ink2, #b8bec6); font-size: 0.85rem; }
+.bs-no { flex-shrink: 0; width: 1.6rem; color: var(--c-text-2); font-size: 0.85rem; }
 .bs-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bs-cnt { flex-shrink: 0; color: var(--r-ink2, #b8bec6); font-size: 0.8rem; }
+.bs-cnt { flex-shrink: 0; color: var(--c-text-2); font-size: 0.8rem; }
 
 /* 推杆开关 */
 .lang-toggle {
@@ -6942,18 +6849,18 @@ watch(
   padding: 4px 6px; font-size: 13px; font-family: inherit;
 }
 .lt-side {
-  color: var(--r-ink, #1f2328); transition: opacity .18s ease, color .18s ease;
+  color: var(--c-text); transition: opacity .18s ease, color .18s ease;
   &.dim { opacity: .35; }
 }
 .lt-track {
   width: 40px; height: 18px; border-radius: 999px;
-  background: var(--r-border, #d8dce1);
+  background: var(--c-line);
   position: relative;
 }
 .lt-knob {
   position: absolute; top: 2px; left: 13px;
   width: 14px; height: 14px; border-radius: 50%;
-  background: var(--r-accent, #8a4b3a);
+  background: var(--c-accent);
   box-shadow: 0 1px 2px rgba(0,0,0,.2);
   transition: left .18s ease;
 }
@@ -6963,20 +6870,20 @@ watch(
 
 .book-nav {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 0 12px; border-bottom: 1px solid var(--r-border, #eee); margin-bottom: 12px;
+  padding: 8px 0 12px; border-bottom: 1px solid var(--c-line); margin-bottom: 12px;
 }
 .book-sel {
   flex: 1; min-width: 180px; max-width: 420px;
-  padding: 6px 10px; border: 1px solid var(--r-border, #e5e7eb); border-radius: 8px;
-  background: var(--r-paper, #fff); color: var(--r-ink, #1f2328); font-size: 13.5px;
+  padding: 6px 10px; border: 1px solid var(--c-line); border-radius: 8px;
+  background: var(--c-surface); color: var(--c-text); font-size: 13.5px;
 }
-.book-pos { color: var(--r-ink2, #9aa0a6); font-size: 12.5px; }
+.book-pos { color: var(--c-text-2); font-size: 12.5px; }
 .title-row { display: flex; align-items: center; gap: 8px; }
 .title-edit-btn { border: none; background: none; cursor: pointer; color: #999; line-height: 0; &:hover { color: #333; } }
 .title-bookmark-btn { border: none; background: none; cursor: pointer; color: #ddd; line-height: 0; &:hover { color: #c9a35a; } &.on { color: #d9a441; } }
 .title-completed-btn { border: none; background: none; cursor: pointer; color: #ddd; line-height: 0; &:hover { color: #6a9c5a; } &.on { color: #5a9d4a; } }
 .title-edit-input {
-  font-size: 21px; font-weight: 700; color: #1a1a1a; border: none; border-bottom: 2px solid var(--r-accent, #8a4b3a); outline: none; padding: 0 2px; flex: 1; max-width: 480px;
+  font-size: 21px; font-weight: 700; color: #1a1a1a; border: none; border-bottom: 2px solid var(--c-accent); outline: none; padding: 0 2px; flex: 1; max-width: 480px;
 }
 .article-title { cursor: text; &:hover { color: #555; } }
 
@@ -6995,8 +6902,8 @@ watch(
   span { flex: 1; }
 }
 
-.article-title { font-size: 21px; color: var(--r-ink, #1a1a1a); margin-bottom: 2px; }
-.meta { color: var(--r-ink2, #999); font-size: 13px; margin-bottom: 18px; }
+.article-title { font-size: 21px; color: var(--c-text); margin-bottom: 2px; }
+.meta { color: var(--c-text-2); font-size: 13px; margin-bottom: 18px; }
 
 .content.layout-split { display: flex; flex-direction: column; gap: 0; }
 .split-row {
@@ -7008,11 +6915,11 @@ watch(
   align-items: start;
   &:last-child { border-bottom: none; }
 }
-.content .en { font-size: 15.5px; color: var(--r-ink, #1a1a1a); line-height: 1.8; }
-.content .zh { font-size: 14.5px; color: var(--r-ink2, #666); line-height: 1.9; }
+.content .en { font-size: 15.5px; color: var(--c-text); line-height: 1.8; }
+.content .zh { font-size: 14.5px; color: var(--c-text-2); line-height: 1.9; }
 .en-placeholder, .zh-placeholder { margin: 0; }
 .content.layout-bilingual .block.en { margin-bottom: 18px; }
-.sentence-row { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px dashed var(--r-border, #f0f0f0); }
+.sentence-row { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px dashed var(--c-line); }
 /* 行距放开：标记高亮带内边距后，1.6 的行距会让上下行的高亮块贴在一起 */
 .sentence-row .en { margin-bottom: 6px; line-height: 1.9; }
 .sentence-row.jump-flash { animation: jumpFlash 1.6s ease; }
@@ -7031,7 +6938,7 @@ watch(
 }
 .recite-idx {
   flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
-  background: var(--r-ui, #f2f2f2); color: #999;
+  background: var(--c-surface-2); color: #999;
   font-size: 11.5px; line-height: 22px; text-align: center;
 }
 .recite-body { flex: 1; min-width: 0; }
@@ -7040,7 +6947,7 @@ watch(
 .recite-item-input { display: flex; gap: 8px; align-items: flex-start; }
 .recite-input {
   flex: 1; min-width: 0;
-  min-height: 52px; border: 1px solid var(--r-border, #ddd); border-radius: 8px;
+  min-height: 52px; border: 1px solid var(--c-line); border-radius: 8px;
   padding: 9px 11px; font-size: 14px; line-height: 1.6;
   resize: vertical; outline: none;
   &:focus { border-color: #999; }
@@ -7067,18 +6974,18 @@ watch(
 /* 拖放区。原来只有一个写着「拖入 / 选择视频」的按钮，可 <label> 不接受拖放，
    拖上去没有任何反应。这里给整个面板挂 drop 事件，并画出明确的落点。 */
 .drop-zone {
-  border: 2px dashed var(--r-border, #d8dce1);
+  border: 2px dashed var(--c-line);
   border-radius: 12px;
   padding: 28px 20px;
   display: flex; flex-direction: column; align-items: center; gap: 14px;
   transition: border-color .15s ease, background-color .15s ease;
 }
 .drop-zone.active {
-  border-color: var(--r-accent, #5b7a99);
-  background: color-mix(in srgb, var(--r-accent, #5b7a99) 7%, transparent);
+  border-color: var(--c-accent);
+  background: color-mix(in srgb, var(--c-accent) 7%, transparent);
 }
 .drop-zone.busy { opacity: .75; }
-.dz-main { font-size: 15px; color: var(--r-ink2, #8a9099); }
+.dz-main { font-size: 15px; color: var(--c-text-2); }
 .dz-actions { display: flex; gap: 10px; }
 
 .align-panel { padding-top: 4px; }
@@ -7111,13 +7018,12 @@ watch(
   .icon-btn { border: none; background: none; cursor: pointer; color: #555; line-height: 0; &:hover { color: #000; } }
 }
 .shadow-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13.5px; }
-.ghost-btn.small { padding: 5px 12px; font-size: 12.5px; }
 /* .shadow-score / .shadow-heard 是给分数和识别文本用的，两样都没了，样式一起删 */
 
 .mark-menu {
   position: fixed;
   z-index: 300;
-  background: var(--r-accent, #8a4b3a);
+  background: var(--c-accent);
   border-radius: 10px;
   padding: 8px;
   display: flex;
@@ -7145,7 +7051,7 @@ watch(
 .side-resizer {
   position: absolute; left: -3px; top: 0; bottom: 0; width: 7px;
   cursor: col-resize; z-index: 2;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 22%, transparent); }
 }
 .side-panel-body {
   position: fixed;
@@ -7153,8 +7059,8 @@ watch(
   top: 44px;
   bottom: 0;
   width: clamp(300px, 26vw, 460px);
-  background: var(--r-ui, #fff);
-  border-left: 1px solid var(--r-border, #e4e4e4);
+  background: var(--c-surface-2);
+  border-left: 1px solid var(--c-line);
   box-shadow: -2px 0 12px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
@@ -7162,20 +7068,20 @@ watch(
 }
 .side-resize-handle {
   position: absolute; top: 0; right: -4px; bottom: 0; width: 8px; cursor: col-resize; z-index: 2;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #999) 15%, transparent); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 15%, transparent); }
 }
 .side-body-scroll { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px; overflow-y: auto; }
 .mini-accordion {
   display: flex; align-items: center; justify-content: space-between; width: 100%;
   border: none; background: none; cursor: pointer; padding: 6px 2px; flex-shrink: 0;
-  font-size: 13px; color: var(--r-ink2, #555);
-  &:hover { color: var(--r-ink, #1a1a1a); }
+  font-size: 13px; color: var(--c-text-2);
+  &:hover { color: var(--c-text); }
 }
 .toc-list-inline { max-height: 160px; overflow-y: auto; margin-top: 4px; }
 .toc-item {
   display: block; width: 100%; text-align: left; border: none; background: none; cursor: pointer;
-  padding: 7px 8px; border-radius: 6px; font-size: 13.5px; color: var(--r-ink2, #444);
-  &:hover { background: color-mix(in srgb, var(--r-accent, #999) 8%, transparent); }
+  padding: 7px 8px; border-radius: 6px; font-size: 13.5px; color: var(--c-text-2);
+  &:hover { background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
 }
 
 .save-vocab-overlay {
@@ -7194,26 +7100,26 @@ watch(
 .notes-pager { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .np-btn {
   width: 26px; height: 26px; border-radius: 7px; cursor: pointer; font-size: 15px; line-height: 1;
-  border: 1px solid var(--r-border, #ddd); background: var(--r-paper, #fff); color: var(--r-ink, #333);
+  border: 1px solid var(--c-line); background: var(--c-surface); color: var(--c-text);
 }
 .np-btn:disabled { opacity: 0.35; cursor: default; }
 .np-sel {
   flex: 1; min-width: 0; padding: 5px 8px; font-size: 12.5px; border-radius: 7px;
-  border: 1px solid var(--r-border, #ddd); background: var(--r-paper, #fff); color: inherit;
+  border: 1px solid var(--c-line); background: var(--c-surface); color: inherit;
 }
 .notes-box { margin-top: 0; border-top: none; padding-top: 0; flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .notes-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; flex-shrink: 0; }
 .notes-ai-btn {
-  border: 1px solid var(--r-border, #ddd);
-  background: var(--r-ui, #fff);
-  color: var(--r-accent, #3a86ff);
+  border: 1px solid var(--c-line);
+  background: var(--c-surface-2);
+  color: var(--c-accent);
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  &:hover:not(:disabled) { background: color-mix(in srgb, var(--r-accent, #3a86ff) 10%, var(--r-ui, #fff)); }
+  &:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 10%, var(--c-surface-2)); }
   &:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .notes-area {
@@ -7228,11 +7134,11 @@ watch(
 }
 .vocab-target-picker { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .s-select {
-  border: 1px solid var(--r-border, #ddd); border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none; background: #fff;
+  border: 1px solid var(--c-line); border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none; background: #fff;
   &:focus { border-color: #999; }
 }
 .s-input {
-  border: 1px solid var(--r-border, #ddd); border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none;
+  border: 1px solid var(--c-line); border-radius: 7px; padding: 6px 10px; font-size: 12.5px; outline: none;
   &:focus { border-color: #999; }
 }
 
@@ -7264,8 +7170,8 @@ watch(
   width: max-content; min-width: 460px;
   max-width: calc(100vw - var(--lb-nav-w, 178px) - 32px);
   padding: 8px 14px 10px; border-radius: 12px;
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e5e7eb);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   box-shadow: 0 8px 28px rgba(0, 0, 0, .16);
 }
 /* 拖动手柄：整条顶部都能拖 */
@@ -7276,19 +7182,19 @@ watch(
 .sb-drag:active { cursor: grabbing; }
 .sb-drag::before {
   content: ''; width: 38px; height: 4px; border-radius: 2px;
-  background: var(--r-border, #dfe3e8);
+  background: var(--c-line);
 }
 /* 跟读模式下正文留出底栏的高度，最后几行才不会被盖住 */
 .reading.shadow-on .content { padding-bottom: 96px; }
 .sb-item {
   display: flex; align-items: center; gap: 6px;
-  font-size: 13px; color: var(--r-ink2, #777);
+  font-size: 13px; color: var(--c-text-2);
   flex-shrink: 0; white-space: nowrap;   /* 宁可挤别处，也不能把「跟读」两个字竖起来 */
 }
 .sb-item input { flex-shrink: 0; margin: 0; }
 /* 控制条：播放键居中，两侧宽度相等，中间才是真的居中 */
 .sb-row { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
-.sb-left, .sb-right { flex: 1; min-width: 0; font-size: 12.5px; color: var(--r-ink2, #9aa0a6); }
+.sb-left, .sb-right { flex: 1; min-width: 0; font-size: 12.5px; color: var(--c-text-2); }
 /* 左侧三个控件横着排开。原来外层是个 label 又套了两个 label（HTML 不允许嵌套 label，
    点循环下拉会连带触发外层），而且没写 gap / nowrap，被挤到宽度不够时
    「跟读」两个字就竖起来了。 */
@@ -7303,16 +7209,16 @@ watch(
 .sb-slider { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .sl-pick {
   flex-shrink: 0; border: none; background: none; cursor: pointer;
-  font-size: 12.5px; font-family: inherit; color: var(--r-ink2, #6b7280);
+  font-size: 12.5px; font-family: inherit; color: var(--c-text-2);
   padding: 2px 4px; border-radius: 6px;
-  &:hover { background: var(--r-ui, #f2f4f7); }
+  &:hover { background: var(--c-surface-2); }
 }
-.sl-range { flex: 1; min-width: 60px; accent-color: var(--r-accent, #8a4b3a); }
-.sl-val { flex-shrink: 0; min-width: 3rem; text-align: right; color: var(--r-ink2, #9aa0a6); font-size: 12px; }
+.sl-range { flex: 1; min-width: 60px; accent-color: var(--c-accent); }
+.sl-val { flex-shrink: 0; min-width: 3rem; text-align: right; color: var(--c-text-2); font-size: 12px; }
 
 .sb-sel {
   padding: 4px 8px; border-radius: 7px; font-size: 12.5px;
-  border: 1px solid var(--r-border, #ddd); background: var(--r-paper, #fff); color: inherit;
+  border: 1px solid var(--c-line); background: var(--c-surface); color: inherit;
 }
 /* 录音按钮：外圈半径跟着说话音量走 */
 .mic-btn {
@@ -7320,8 +7226,8 @@ watch(
   width: 30px; height: 30px; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: none; border-radius: 50%; cursor: pointer;
-  background: var(--r-ui, #f2f4f7); color: var(--r-ink2, #6b7280);
-  &:hover { color: var(--r-accent, #8a4b3a); }
+  background: var(--c-surface-2); color: var(--c-text-2);
+  &:hover { color: var(--c-accent); }
   &.on { background: #c0392b; color: #fff; }
 }
 /* 声波竖条：每根一个频段，高度直接由实时数据给，不用 keyframes ——
@@ -7350,11 +7256,11 @@ watch(
 
 /* 实时识别的文字：跟最终结果区分开，用虚线下划线表示"还在听" */
 .live-text {
-  font-size: 12.5px; color: var(--r-accent, #8a4b3a);
+  font-size: 12.5px; color: var(--c-accent);
   border-bottom: 1px dashed currentColor; padding-bottom: 1px;
 }
 
-.rec-len { font-size: 12px; color: var(--r-ink2, #9aa0a6); }
+.rec-len { font-size: 12px; color: var(--c-text-2); }
 
 
 /* 录音中的秒数。加录音时用了这个类却忘了写样式，全项扫描才发现 */
@@ -7371,17 +7277,17 @@ watch(
  */
 .icon-btn {
   border: none; background: none; padding: 2px; cursor: pointer;
-  color: var(--r-ink2, #8a9099); line-height: 0;
-  &:hover { color: var(--r-ink, #1f2328); }
+  color: var(--c-text-2); line-height: 0;
+  &:hover { color: var(--c-text); }
 }
-.icon-btn.danger:hover { color: #b5493c; }
+.icon-btn.danger:hover { color: var(--c-danger); }
 
 .recite-wrap { margin-top: 6px; }
 .recite-toggle {
   display: flex; align-items: center; gap: 6px; max-width: 100%;
   border: none; background: none; cursor: pointer; padding: 0;
-  font-size: 12px; font-family: inherit; color: var(--r-ink2, #9aa0a6);
-  &:hover { color: var(--r-accent, #8a4b3a); }
+  font-size: 12px; font-family: inherit; color: var(--c-text-2);
+  &:hover { color: var(--c-accent); }
 }
 /* 收起时把内容露一行出来，不用展开也知道自己说了什么 */
 .recite-peek {
@@ -7396,14 +7302,14 @@ watch(
   padding: 4px 8px; border-radius: 6px;
   border: 1px solid transparent;
   font-size: 12.5px; font-family: inherit; line-height: 1.55;
-  background: var(--r-ui, #f6f7f9); color: var(--r-ink, #1f2328);
+  background: var(--c-surface-2); color: var(--c-text);
   resize: none; overflow: hidden;
   transition: border-color .15s ease, background-color .15s ease;
-  &:hover { border-color: var(--r-border, #e5e7eb); }
+  &:hover { border-color: var(--c-line); }
   &:focus {
     outline: none;
-    border-color: var(--r-accent, #8a4b3a);
-    background: var(--r-paper, #fff);
+    border-color: var(--c-accent);
+    background: var(--c-surface);
   }
 }
 
@@ -7411,12 +7317,12 @@ watch(
   margin: 4px 0 0;
   font-size: 14px;
   line-height: 1.75;
-  color: var(--r-ink2, #6b7280);
+  color: var(--c-text-2);
 }
 
 .shadow-item.playing {
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 10%, transparent);
-  box-shadow: inset 3px 0 0 var(--r-accent, #8a4b3a);
+  background: color-mix(in srgb, var(--c-accent) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--c-accent);
   border-radius: 8px;
   /* 内边距要够，否则背景块紧贴文字，跟标记高亮的下边框叠在一起就"压住"了字。
      左边 3px 是 inset 阴影的宽度，再加 9px 才不会顶着首字母。 */
@@ -7433,43 +7339,43 @@ watch(
 }
 .append-box {
   width: min(460px, 88vw); max-height: 70vh;
-  background: var(--r-paper, #fff); border-radius: 12px;
+  background: var(--c-surface); border-radius: 12px;
   padding: 18px; display: flex; flex-direction: column; gap: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
 }
-.append-title { font-size: 15px; font-weight: 600; color: var(--r-ink, #1f2328); }
+.append-title { font-size: 15px; font-weight: 600; color: var(--c-text); }
 .append-list { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
 .append-item {
   display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
   padding: 9px 10px; border: none; background: none; border-radius: 8px;
   cursor: pointer; text-align: left; font-size: 14px;
-  &:hover { background: var(--r-ui, #f4f5f7); }
+  &:hover { background: var(--c-surface-2); }
 }
-.ai-title { color: var(--r-ink, #1f2328); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-meta { flex-shrink: 0; color: var(--r-ink2, #9aa0a6); font-size: 12px; }
-.append-empty { color: var(--r-ink2, #9aa0a6); font-size: 13px; margin: 8px 0; }
+.ai-title { color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-meta { flex-shrink: 0; color: var(--c-text-2); font-size: 12px; }
+.append-empty { color: var(--c-text-2); font-size: 13px; margin: 8px 0; }
 .merge-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .grp-row {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 8px;
-  &:hover { background: var(--r-ui, #f4f5f7); }
+  &:hover { background: var(--c-surface-2); }
 }
 .grp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.grp-cnt { flex-shrink: 0; color: var(--r-ink2, #9aa0a6); font-size: 12px; }
+.grp-cnt { flex-shrink: 0; color: var(--c-text-2); font-size: 12px; }
 .toc-row { display: flex; align-items: center; gap: 6px; }
 .toc-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toc-mark { flex-shrink: 0; font-size: 12px; }
 .toc-add {
   width: 100%; margin-top: 6px; padding: 7px 10px;
-  border: 1px dashed var(--r-border, #d8dce1); border-radius: 8px;
-  background: none; color: var(--r-ink2, #9aa0a6); font-size: 13px; cursor: pointer;
-  &:hover { color: var(--r-ink, #1f2328); border-color: var(--r-ink2, #9aa0a6); }
+  border: 1px dashed var(--c-line); border-radius: 8px;
+  background: none; color: var(--c-text-2); font-size: 13px; cursor: pointer;
+  &:hover { color: var(--c-text); border-color: var(--c-text-2); }
 }
 </style>
 
 <style>
 /* 当前默认色加个圈，一眼看出收藏单词会用哪个 */
-.color-dot.cur { box-shadow: 0 0 0 2px var(--r-paper, #fff), 0 0 0 3.5px var(--r-accent, #8a4b3a); }
+.color-dot.cur { box-shadow: 0 0 0 2px var(--c-surface), 0 0 0 3.5px var(--c-accent); }
 
 /**
  * 自定义高亮色。
@@ -7495,21 +7401,21 @@ watch(
 
 .notes-area p { margin: 0 0 8px; }
 .notes-area p:last-child { margin-bottom: 0; }
-.notes-area strong { color: var(--r-ink, #1a1a1a); }
+.notes-area strong { color: var(--c-text); }
 .note-mark-link {
-  color: var(--r-accent, #3a86ff);
+  color: var(--c-accent);
   text-decoration: underline;
   text-decoration-style: dotted;
   cursor: pointer;
 }
 .note-mark-link:hover { text-decoration-style: solid; }
 .note-expand-btn {
-  border: none; background: none; cursor: pointer; color: #999; font-size: 11.5px; padding: 0 0 0 4px;
+  border: none; background: none; cursor: pointer; color: var(--c-text-2); font-size: 11.5px; padding: 0 0 0 4px;
 }
-.note-expand-btn:hover:not(:disabled) { color: #666; }
+.note-expand-btn:hover:not(:disabled) { color: var(--c-text-2); }
 .note-expand-btn:disabled { cursor: default; }
 .note-word-detail {
-  font-size: 12.5px; color: #666; margin: 2px 0 10px 6px; padding-left: 10px; border-left: 2px solid #eee;
+  font-size: 12.5px; color: var(--c-text-2); margin: 2px 0 10px 6px; padding-left: 10px; border-left: 2px solid var(--c-line);
 }
 .note-word-detail p { margin: 0 0 4px; }
 .note-word-detail p:last-child { margin-bottom: 0; }
@@ -7519,7 +7425,7 @@ watch(
 .lb-toast {
   position: fixed; right: 20px; bottom: 20px; z-index: 200;
   max-width: min(460px, 80vw); padding: 11px 14px; border-radius: 10px;
-  background: var(--r-ink, #1f2328); color: #fff; font-size: 13px; line-height: 1.6;
+  background: var(--c-text); color: var(--c-text-on-accent); font-size: 13px; line-height: 1.6;
   box-shadow: 0 6px 20px rgba(0,0,0,.18); cursor: pointer; white-space: pre-wrap;
 }
 
@@ -7535,8 +7441,8 @@ watch(
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e2e2e2);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   border-radius: 12px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.07);
   overflow: hidden;
@@ -7547,20 +7453,20 @@ watch(
 .toc-fold {
   border: none;
   background: transparent;
-  color: var(--r-ink2, #888);
+  color: var(--c-text-2);
   font-size: 0.9rem;
   padding: 0.7rem 0.75rem;
   cursor: pointer;
   text-align: left;
   flex-shrink: 0;
-  &:hover { color: var(--r-ink, #333); }
+  &:hover { color: var(--c-text); }
 }
 /* 目录尺度对齐 TypeWords：面板 --panel-width 24rem，
    列表 .list { gap: 1rem }，正文级字号（它的 .translate 是 1rem）。
    原来是 12.5px 字号 + 5px 内边距，挤成一小团。 */
 .toc-scroll {
   overflow-y: auto;
-  border-top: 1px solid var(--r-border, #f0f0f0);
+  border-top: 1px solid var(--c-line);
   padding: 0.6rem 0;
   display: flex;
   flex-direction: column;
@@ -7574,14 +7480,14 @@ watch(
   border: none;
   border-radius: 0.5rem;
   background: transparent;
-  color: var(--r-ink2, #666);
+  color: var(--c-text-2);
   font-size: 0.95rem;
   line-height: 1.6;
   padding: 0.55rem 0.75rem;
   cursor: pointer;
   text-align: left;
-  &:hover { background: var(--r-ui, #f5f5f5); color: var(--r-ink, #222); }
-  &.on { background: var(--r-ui, #f0f2f5); color: var(--r-accent, #8a4b3a); font-weight: 600; }
+  &:hover { background: var(--c-surface-2); color: var(--c-text); }
+  &.on { background: var(--c-surface-2); color: var(--c-accent); font-weight: 600; }
 }
 
 @media (max-width: 1280px) {
@@ -7590,18 +7496,18 @@ watch(
 @media (max-width: 860px) {
   .chapter-toc { display: none; }
 }
-.a-cleanup.stop { color: #b05a4a; font-weight: 600; }
+.a-cleanup.stop { color: var(--c-danger); font-weight: 600; }
 .a-cleanup, .a-export {
   border: none; background: none; color: #ccc; cursor: pointer; font-size: 13px;
   opacity: 0; transition: opacity .12s ease, color .12s ease; white-space: nowrap;
   &:disabled { cursor: default; color: #ddd; }
 }
 .article-row:hover .a-export { opacity: 1; }
-.a-export:hover { color: var(--r-accent, #8a4b3a); }
+.a-export:hover { color: var(--c-accent); }
 .a-del { opacity: 0; transition: opacity .12s ease; }
 .article-row:hover .a-del { opacity: 1; }
 .article-row:hover .a-cleanup { opacity: 1; }
-.a-cleanup:hover:not(:disabled) { color: var(--r-accent, #8a4b3a); }
+.a-cleanup:hover:not(:disabled) { color: var(--c-accent); }
 .ghost-btn.disabled { opacity: 0.5; pointer-events: none; }
 
 
@@ -7616,7 +7522,7 @@ watch(
   padding: 24px;
 }
 .rc-card {
-  background: var(--r-paper, #fff); border-radius: 14px;
+  background: var(--c-surface); border-radius: 14px;
   width: min(720px, 100%); max-height: 80vh;
   display: flex; flex-direction: column;
   padding: 18px 20px;
@@ -7624,27 +7530,27 @@ watch(
 }
 .rc-head { display: flex; align-items: center; justify-content: space-between; }
 .rc-head h3 { margin: 0; font-size: 16px; }
-.rc-sum { font-size: 13px; color: var(--r-ink2, #777); margin: 6px 0 12px; }
+.rc-sum { font-size: 13px; color: var(--c-text-2); margin: 6px 0 12px; }
 .rc-list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
 .rc-row {
   display: flex; align-items: center; gap: 10px;
-  padding: 7px 0; border-bottom: 1px solid var(--r-border, #f0f0f0);
+  padding: 7px 0; border-bottom: 1px solid var(--c-line);
   font-size: 13px;
 }
-.rc-hd { color: var(--r-ink2, #999); font-size: 12px; border-bottom-width: 1px; }
+.rc-hd { color: var(--c-text-2); font-size: 12px; border-bottom-width: 1px; }
 .rc-no {
   width: 30px; flex-shrink: 0; text-align: center;
-  color: var(--r-ink2, #999); font-size: 12.5px;
+  color: var(--c-text-2); font-size: 12.5px;
   border: none; background: none; padding: 0;
 }
-.rc-link { cursor: pointer; &:hover { color: var(--r-accent, #8a4b3a); } }
+.rc-link { cursor: pointer; &:hover { color: var(--c-accent); } }
 .rc-text {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--r-ink, #1f2328);
+  color: var(--c-text);
 }
-.rc-len { width: 52px; flex-shrink: 0; text-align: right; color: var(--r-ink2, #777); }
-.rc-verdict { width: 62px; flex-shrink: 0; text-align: right; color: var(--r-ink2, #999); }
-.rc-verdict.off { color: var(--r-accent, #8a4b3a); }
+.rc-len { width: 52px; flex-shrink: 0; text-align: right; color: var(--c-text-2); }
+.rc-verdict { width: 62px; flex-shrink: 0; text-align: right; color: var(--c-text-2); }
+.rc-verdict.off { color: var(--c-accent); }
 .rc-pad { width: 28px; flex-shrink: 0; }
 </style>

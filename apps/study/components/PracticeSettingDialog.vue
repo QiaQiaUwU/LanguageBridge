@@ -8,20 +8,11 @@
         <span v-if="dateText !== '-'" class="date">（约 {{ dateText }}）</span>
       </p>
 
-      <div class="line">
-        <span>从第</span>
-        <input v-model.number="startIndex" type="number" class="num-input" :min="0" :max="total" />
-        <span>个开始，每日</span>
-        <input v-model.number="perDay" type="number" class="num-input narrow" :min="1" :max="500" />
-        <span>个新词，最多复习</span>
-        <b class="review-num">{{ perDay * reviewRatio || '-' }}</b>
-        <span>个</span>
-      </div>
-
       <div class="row">
-        <label class="row-label" title="每日复习量 = 每日新词量 × 这个倍数">复习比</label>
+        <label class="row-label" title="每日复习 = 每日新词 × 复习比">复习比</label>
         <input v-model.number="reviewRatio" type="number" class="num-input narrow" :min="0" :max="10" />
-        <span v-if="!reviewRatio" class="warn">设为 0 表示只学新词、不安排复习；学完整本后仍会按 1 倍复习</span>
+        <span v-if="reviewRatio" class="slider-val">每日复习 {{ perDay * reviewRatio }}</span>
+        <span v-else class="warn">不安排复习</span>
       </div>
 
       <div class="row">
@@ -44,13 +35,13 @@
       </div>
       <div class="row switch-row">
         <label><input v-model="ignoreCase" type="checkbox" /> 忽略大小写</label>
-        <label><input v-model="allowSpellVariant" type="checkbox" /> 英美拼法互认（colour = color）</label>
-        <label><input v-model="ignoreSymbol" type="checkbox" /> 忽略标点（连字符、撇号打错不算错）</label>
+        <label><input v-model="allowSpellVariant" type="checkbox" /> 英美拼法互认</label>
+        <label><input v-model="ignoreSymbol" type="checkbox" /> 忽略标点</label>
         <label><input v-model="practiceSentence" type="checkbox" /> 打完单词接着跟打例句</label>
         <label><input v-model="showEtymologyAndRelWords" type="checkbox" /> 练习时显示词源和相关词</label>
         <label><input v-model="autoPlayFirstSentence" type="checkbox" /> 进入新词时自动播第一个例句</label>
         <label>
-          认识/不认识怎么判定
+          认识判定
           <select v-model="identifyMethod">
             <option value="self">自己判断</option>
             <option value="choice">四选一选择题</option>
@@ -61,16 +52,14 @@
           <input v-model.number="repeatCustomCount" type="number" min="1" max="10" />
         </label>
         <label>
-          每 <input v-model.number="groupSize" type="number" min="2" max="30" class="tiny" /> 个词一组
-          （跟写完一组回头拼写这一组）
+          每组 <input v-model.number="groupSize" type="number" min="2" max="30" class="tiny" /> 词
         </label>
-        <label><input v-model="flashcardTyping" type="checkbox" /> 卡片背单词要先把词敲出来</label>
+        <label><input v-model="flashcardTyping" type="checkbox" /> 卡片背单词先打字</label>
         <label><input v-model="autoMarkStatus" type="checkbox" /> 练完自动标注认识/模糊/不认识</label>
-        <label><input v-model="autoMasterKnown" type="checkbox" /> 判成「认识」的词收进已掌握词表（可在那页移出）</label>
+        <label><input v-model="autoMasterKnown" type="checkbox" /> 认识的词收进已掌握</label>
         <label>
-          每学 <input v-model.number="scenarioEvery" type="number" min="0" max="200" class="tiny" /> 个新词插一次场景学习（0 = 不插）
-          <span class="ai-dot" title="会调用 AI 接口">✦</span>
-          <em class="cost-note">开着会为这个词表生成一套配套教材（按话题分课、排学习顺序），第一次学时跑一次，消耗额度</em>
+          场景学习间隔 <input v-model.number="scenarioEvery" type="number" min="0" max="200" class="tiny" /> 词
+          <span class="ai-dot" title="调用 AI">✦</span>
         </label>
         <label v-if="autoMarkStatus">
           错 ≤ <input v-model.number="statusKnownLimit" type="number" min="0" max="9" class="tiny" /> 次算认识，
@@ -102,7 +91,7 @@
       </div>
       <div class="row switch-row">
         <label :title="SIMPLE_WORDS.slice(0, 12).join(' / ') + ' … 共 ' + SIMPLE_WORDS.length + ' 个'">
-          <input v-model="ignoreSimpleWord" type="checkbox" /> 跳过高频虚词（a / the / is / to 等 {{ SIMPLE_WORDS.length }} 个）
+          <input v-model="ignoreSimpleWord" type="checkbox" /> 跳过高频虚词
         </label>
       </div>
       <div class="row switch-row">
@@ -111,22 +100,22 @@
         <label v-if="keyboardSound" class="inline-sel">
           音色
           <select v-model="keyboardSoundFile">
-            <option value="mechanical">机械（脆）</option>
-            <option value="membrane">薄膜（闷）</option>
-            <option value="typewriter">打字机（低）</option>
+            <option value="mechanical">机械</option>
+            <option value="membrane">薄膜</option>
+            <option value="typewriter">打字机</option>
           </select>
         </label>
         <label><input v-model="effectSound" type="checkbox" /> 提示音</label>
       </div>
 
       <div class="row">
-        <label class="row-label" title="只对 TTS 兜底发音生效；有道真人发音改速率会变调，保持原速">听写语速</label>
+        <label class="row-label" title="仅朗读">听写语速</label>
         <input v-model.number="soundSpeed" type="range" class="slider" min="0.5" max="1.5" step="0.05" />
         <span class="slider-val">{{ soundSpeed.toFixed(2) }}×</span>
       </div>
 
       <div class="row switch-row">
-        <label><input v-model="allowWordTip" type="checkbox" /> 允许看提示（默写时按提示键亮出答案，算一次错）</label>
+        <label><input v-model="allowWordTip" type="checkbox" /> 允许看提示</label>
         <label><input v-model="showNearWord" type="checkbox" /> 显示上/下一个词</label>
       </div>
 
@@ -173,13 +162,13 @@
       <div class="row">
         <label class="row-label">练习模式</label>
         <select v-model="practiceMode" class="mode-select">
-          <option value="system">完整流程（新词跟写→听写→默写，旧词自测→听写→默写）</option>
-          <option value="free">自由练习（只跟写）</option>
+          <option value="system">完整流程</option>
+          <option value="free">只跟写</option>
           <option value="identifyOnly">只自测</option>
           <option value="listenOnly">只听写</option>
           <option value="dictationOnly">只默写</option>
           <option value="review">只复习旧词</option>
-          <option value="shuffle">随机复习（新旧混在一起默写）</option>
+          <option value="shuffle">随机复习</option>
         </select>
       </div>
 
@@ -190,10 +179,9 @@
         <div class="parts-row">
           <label v-for="p in SCENE_PARTS" :key="p.key" class="part-chk" :title="p.tip">
             <input v-model="sceneParts[p.key]" type="checkbox" />
-            {{ p.label }}<span v-if="p.ai" class="ai-dot" title="会调用 AI 接口">✦</span>
+            {{ p.label }}<span v-if="p.ai" class="ai-dot" title="调用 AI">✦</span>
           </label>
         </div>
-        <p class="f-hint">带 ✦ 的需要联网调用 AI，勾得越多生成越慢、消耗越多额度。</p>
       </div>
 
       <div class="actions">
@@ -396,8 +384,8 @@ function save() {
   padding: 20px;
 }
 .dialog {
-  background: var(--r-paper, #fff);
-  color: var(--r-ink, #1c1c1c);
+  background: var(--c-surface);
+  color: var(--c-text);
   border-radius: 14px;
   padding: 22px 26px 18px;
   width: min(600px, 100%);
@@ -407,29 +395,19 @@ function save() {
 }
 .title { margin: 0 0 16px; font-size: 17px; }
 .summary { text-align: center; font-size: 14.5px; margin: 0 0 16px; }
-.summary b { font-size: 19px; color: var(--r-accent, #8a4b3a); margin: 0 4px; }
-.summary .date { color: var(--r-ink2, #999); font-size: 13px; }
-.line {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 14px;
-  margin-bottom: 18px;
-}
+.summary b { font-size: 19px; color: var(--c-accent); margin: 0 4px; }
+.summary .date { color: var(--c-text-2); font-size: 13px; }
 .num-input {
   width: 74px;
   padding: 5px 8px;
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 7px;
-  background: var(--r-ui, #fafafa);
+  background: var(--c-surface-2);
   color: inherit;
   text-align: center;
   font-size: 15px;
   &.narrow { width: 58px; }
 }
-.review-num { color: var(--r-accent, #8a4b3a); font-size: 17px; }
 .row {
   display: flex;
   align-items: center;
@@ -438,41 +416,35 @@ function save() {
   font-size: 13.5px;
   flex-wrap: wrap;
 }
-.row-label { width: 68px; flex-shrink: 0; color: var(--r-ink2, #666); }
+.row-label { width: 68px; flex-shrink: 0; color: var(--c-text-2); }
 .slider { flex: 1; min-width: 140px; }
-.slider-val { min-width: 76px; text-align: right; color: var(--r-ink2, #888); }
-.warn { font-size: 12px; color: #d9822b; }
+.slider-val { min-width: 76px; text-align: right; color: var(--c-text-2); }
+.warn { font-size: 12px; color: var(--c-warn); }
 .switch-row { gap: 18px; label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; } }
 .mode-select {
   flex: 1;
   padding: 6px 8px;
-  border: 1px solid var(--r-border, #ddd);
+  border: 1px solid var(--c-line);
   border-radius: 7px;
-  background: var(--r-ui, #fafafa);
+  background: var(--c-surface-2);
   color: inherit;
   font-size: 13px;
 }
-.sep { border: none; border-top: 1px solid var(--r-border, #eee); margin: 16px 0; }
+.sep { border: none; border-top: 1px solid var(--c-line); margin: 16px 0; }
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .key-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .key-btn {
-  border: 1px solid var(--r-border, #ddd); background: transparent; color: inherit;
+  border: 1px solid var(--c-line); background: transparent; color: inherit;
   border-radius: 8px; padding: 4px 10px; font-size: 12.5px; cursor: pointer;
 }
-.key-btn.listening { border-color: var(--r-accent, #8a4b3a); color: var(--r-accent, #8a4b3a); }
+.key-btn.listening { border-color: var(--c-accent); color: var(--c-accent); }
 .tiny { width: 46px; }
 /* 场景学习那一栏的标题。加这块时漏了样式 */
-.f-label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--r-ink2, #6b7280); }
+.f-label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--c-text-2); }
 .parts-row { display: flex; flex-wrap: wrap; gap: 10px 14px; }
 .part-chk {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 13px; cursor: pointer;
 }
-.ai-dot { color: var(--r-accent, #8a4b3a); font-size: 11px; }
-.f-hint { margin: 6px 0 0; font-size: 11.5px; color: var(--r-ink2, #9aa0a6); }
-.cost-note {
-  display: block; margin-top: 3px;
-  font-size: 12px; font-style: normal; line-height: 1.5;
-  color: var(--r-ink2, #999);
-}
+.ai-dot { color: var(--c-accent); font-size: 11px; }
 </style>

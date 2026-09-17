@@ -8,7 +8,7 @@
         :style="{ left: wordLookupState.x + 'px', top: wordLookupState.y + 'px' }"
         @click.stop
       >
-        <button class="wl-close" title="关闭" @click="closeWordLookup">×</button>
+        <CloseButton class="wl-close" title="关闭" @click="closeWordLookup" />
 
         <template v-if="wordLookupState.loading">
           <div class="wl-tip">查询中…</div>
@@ -21,7 +21,7 @@
               <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
             </button>
           </div>
-          <div class="wl-tip">词库里没有这个词</div>
+          <div class="wl-tip">未收录</div>
         </template>
 
         <template v-else-if="wordLookupState.data">
@@ -30,25 +30,8 @@
             <span v-if="wordLookupState.data.phonetic" class="wl-ph">
               [{{ wordLookupState.data.phonetic.replace(/^\/|\/$/g, '') }}]
             </span>
-            <button class="wl-icon" title="发音" @click="speak(wordLookupState.data.word)">
-              <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
-            </button>
-            <button
-              class="wl-icon star"
-              :class="{ on: collected }"
-              :title="collected ? '点一下取消' : '划线并记进右边的笔记'"
-              :disabled="collecting"
-              @click="collect"
-            >
-              <svg viewBox="0 0 24 24" width="15" height="15">
-                <path
-                  :fill="collected ? 'currentColor' : 'none'"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  d="M12 17.3 6.2 20.6l1.5-6.6L2.6 9.5l6.7-.6L12 2.7l2.7 6.2 6.7.6-5.1 4.5 1.5 6.6z"
-                />
-              </svg>
-            </button>
+            <button class="ui-icon-btn sm" title="发音" @click="speak(wordLookupState.data.word)"><i class="ri-volume-up-line"></i></button>
+            <StarToggle small :model-value="collected" title="收藏" :disabled="collecting" @update:model-value="collect" />
           </div>
 
           <div class="wl-trans">
@@ -198,8 +181,8 @@ watch(
 <style scoped lang="scss">
 
 /* 星星：没收藏是空心，收了是实心且高亮 —— 一眼能看出状态 */
-.wl-icon.star { color: var(--r-ink2, #9aa0a6); }
-.wl-icon.star:hover { color: var(--r-accent, #8a4b3a); }
+.wl-icon.star { color: var(--c-text-2); }
+.wl-icon.star:hover { color: var(--c-accent); }
 .wl-icon.star.on { color: #d4a017; }
 .wl-icon.star:disabled { opacity: .5; cursor: default; }
 
@@ -212,8 +195,8 @@ watch(
   max-width: 22rem;
   min-width: 12rem;
   transform: translateX(-50%);
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e5e7eb);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   border-radius: 0.5rem;
   padding: 0.75rem 1rem;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
@@ -222,25 +205,25 @@ watch(
 .wl-close {
   position: absolute; top: 0.5rem; right: 0.6rem;
   border: none; background: none; cursor: pointer;
-  font-size: 16px; line-height: 1; color: var(--r-ink2, #b8bec6);
-  &:hover { color: var(--r-ink, #1f2328); }
+  font-size: 16px; line-height: 1; color: var(--c-text-2);
+  &:hover { color: var(--c-text); }
 }
 .wl-head {
   display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
   padding-right: 1.25rem;
 }
-.wl-word { font-size: 1.125rem; font-weight: 500; color: var(--r-ink, #1f2328); }
-.wl-ph { font-size: 0.875rem; color: var(--r-ink2, #9aa0a6); }
+.wl-word { font-size: 1.125rem; font-weight: 500; color: var(--c-text); }
+.wl-ph { font-size: 0.875rem; color: var(--c-text-2); }
 .wl-icon {
   border: none; background: none; cursor: pointer; padding: 2px;
-  line-height: 0; color: var(--r-ink2, #b8bec6);
-  &:hover { color: var(--r-accent, #5b7a99); }
+  line-height: 0; color: var(--c-text-2);
+  &:hover { color: var(--c-accent); }
 }
-.wl-tip { font-size: 0.875rem; color: var(--r-ink2, #9aa0a6); margin-top: 0.25rem; }
+.wl-tip { font-size: 0.875rem; color: var(--c-text-2); margin-top: 0.25rem; }
 .wl-trans { margin-top: 0.5rem; font-size: 0.95rem; line-height: 1.7; }
 .wl-row { display: flex; align-items: flex-start; gap: 0.5rem; }
-.wl-pos { flex-shrink: 0; min-width: 2.5rem; color: var(--r-accent, #5b7a99); }
-.wl-cn { flex: 1; min-width: 0; color: var(--r-ink, #1f2328); }
+.wl-pos { flex-shrink: 0; min-width: 2.5rem; color: var(--c-accent); }
+.wl-cn { flex: 1; min-width: 0; color: var(--c-text); }
 
 .wl-fade-enter-active,
 .wl-fade-leave-active { transition: opacity 0.15s ease; }

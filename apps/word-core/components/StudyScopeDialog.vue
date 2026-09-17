@@ -36,13 +36,13 @@ defineEmits<{
 }
 
 .scope-dialog {
-  background: #fff;
+  background: var(--c-surface);
   border-radius: 14px;
   padding: 28px 30px 18px;
   width: min(520px, 92vw);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
 
-  h3 { font-size: 20px; margin-bottom: 20px; color: #1a1a1a; }
+  h3 { font-size: 20px; margin-bottom: 20px; color: var(--c-text); }
 }
 
 .scope-btn {
@@ -52,16 +52,16 @@ defineEmits<{
   margin-bottom: 12px;
   border: 1px solid #333;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   font-size: 15px;
   cursor: pointer;
   transition: background 0.15s;
 
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface)); border-color: color-mix(in srgb, var(--c-accent) 42%, transparent); }
   &.primary {
     background: #e0805e;
     border-color: #e0805e;
-    color: #fff;
+    color: var(--c-text-on-accent);
     &:hover { background: #d06f4d; }
   }
 }
@@ -72,7 +72,7 @@ defineEmits<{
     border: none;
     background: none;
     font-size: 14px;
-    color: #333;
+    color: var(--c-text);
     cursor: pointer;
     padding: 8px 4px;
     &:hover { text-decoration: underline; }

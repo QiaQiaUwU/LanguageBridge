@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
   top: 20px;
   left: 20px;
   border: none;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   border-radius: 10px;
   padding: 10px;
   cursor: pointer;
@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
   width: min(480px, 90vw);
   min-height: 500px;
   margin-top: 36px;
-  background: #fff;
+  background: var(--c-surface);
   border-radius: 18px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
   display: flex;
@@ -319,7 +319,7 @@ onBeforeUnmount(() => {
   border: none;
   background: none;
   cursor: pointer;
-  color: #333;
+  color: var(--c-text);
   margin-bottom: 10px;
   line-height: 0;
   &:hover { color: #000; }
@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
 .fc-word {
   font-size: 42px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--c-text);
   &.small { font-size: 28px; margin-bottom: 16px; }
   /* 打字状态：等宽 + 字距，免得每敲一个字整行都在跳 */
   &.typing {
@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
   }
   &.typing.is-wrong { animation: fc-shake .18s; }
 }
-.lt-wrong { color: #c0392b; }
+.lt-wrong { color: var(--c-danger); }
 .lt-rest { color: #c9ccd1; }   /* 还没敲到的部分：浅色，看得见但一眼能分辨 */
 @keyframes fc-shake {
   0%, 100% { transform: translateX(0); }
@@ -350,8 +350,8 @@ onBeforeUnmount(() => {
 
 .fc-pos {
   margin-top: 18px;
-  background: #f0f0f0;
-  color: #555;
+  background: var(--c-surface-2);
+  color: var(--c-text-2);
   padding: 3px 12px;
   border-radius: 6px;
   font-size: 13px;
@@ -359,15 +359,15 @@ onBeforeUnmount(() => {
 }
 
 
-.fc-def { font-size: 19px; color: #333; line-height: 1.7; }
+.fc-def { font-size: 19px; color: var(--c-text); line-height: 1.7; }
 
 .fc-example {
   margin-top: 24px;
   font-size: 15px;
-  .en { color: #1a1a1a; }
-  .zh { color: #777; margin-top: 6px; }
+  .en { color: var(--c-text); }
+  .zh { color: var(--c-text-2); margin-top: 6px; }
   .inline-speak {
-    border: none; background: none; cursor: pointer; color: #555; line-height: 0; vertical-align: middle;
+    border: none; background: none; cursor: pointer; color: var(--c-text-2); line-height: 0; vertical-align: middle;
     &:hover { color: #000; }
   }
 }
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
 .flash-done {
   margin-top: 80px;
   text-align: center;
-  h2 { font-size: 28px; color: #1a1a1a; margin-bottom: 14px; }
+  h2 { font-size: 28px; color: var(--c-text); margin-bottom: 14px; }
   p { color: #7a7268; font-size: 16px; }
 }
 
@@ -417,10 +417,10 @@ onBeforeUnmount(() => {
   padding: 12px 26px;
   border-radius: 10px;
   border: 1px solid #333;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   font-size: 15px;
   cursor: pointer;
   &:hover { background: #f4efe8; }
-  &.primary { background: #e0805e; border-color: #e0805e; color: #fff; &:hover { background: #d06f4d; } }
+  &.primary { background: #e0805e; border-color: #e0805e; color: var(--c-text-on-accent); &:hover { background: #d06f4d; } }
 }
 </style>

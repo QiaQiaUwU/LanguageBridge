@@ -1,11 +1,8 @@
 <template>
   <div class="notes-page">
     <header class="page-head">
-      <button class="ghost-btn small" @click="$router.push('/home')">← 主页</button>
-      <div>
-        <h2 class="title">学习记录</h2>
-        <p class="sub">笔记和 AI 生成的文章，按时间倒序。</p>
-      </div>
+      <BackLink label="主页" to="/home" />
+      <h2 class="title">学习记录</h2>
     </header>
 
     <div class="toolbar">
@@ -16,16 +13,16 @@
       </select>
       <select v-model="kindFilter" class="mini-select">
         <option value="">全部类型</option>
-        <option value="note">我记的笔记</option>
-        <option value="ai">AI 生成的文章</option>
+        <option value="note">笔记</option>
+        <option value="ai">AI 文章</option>
+        <option value="dictation">听写</option>
+        <option value="familyNote">词族笔记</option>
       </select>
-      <input v-model="keyword" class="search" placeholder="搜索内容或标题" />
+      <input v-model="keyword" class="search" placeholder="搜索" />
       <span class="count">{{ filtered.length }} 条</span>
     </div>
 
-    <p v-if="!filtered.length" class="empty">
-      {{ items.length ? '当前筛选下没有记录。' : '还没有记录。在阅读助手里划线记笔记、或者用场景学习生成文章，这里就会出现。' }}
-    </p>
+    <EmptyState v-if="!filtered.length" />
 
     <ul v-else class="timeline">
       <li v-for="it in filtered" :key="it.key" class="entry">
@@ -33,6 +30,7 @@
           <span class="date">{{ formatDate(it.time) }}</span>
           <span v-if="it.groupName" class="group-tag">{{ it.groupName }}</span>
           <span v-if="it.aiLabel" class="ai-tag">{{ it.aiLabel }}</span>
+          <span v-if="it.score != null" class="score-tag">{{ it.score }}</span>
         </div>
 
         <div class="entry-body">
@@ -58,7 +56,6 @@
           ></div>
           <p v-else class="entry-preview">{{ it.preview }}</p>
 
-          <p v-if="editingKey === it.key && it.kind === 'article'" class="edit-hint">正文在阅读助手里改</p>
 
           <div class="entry-acts">
             <template v-if="editingKey === it.key">
@@ -66,7 +63,7 @@
               <button class="dark-btn tiny" @click="saveEdit(it)">保存</button>
             </template>
             <template v-else>
-              <button class="ghost-btn tiny" @click="startEdit(it)">编辑</button>
+              <button v-if="!isRecord(it)" class="ghost-btn tiny" @click="startEdit(it)">编辑</button>
               <button class="ghost-btn tiny danger" @click="askDelete(it)">删除</button>
             </template>
           </div>
@@ -77,9 +74,8 @@
     <div v-if="pendingDelete" class="del-mask" @click.self="pendingDelete = null">
       <div class="del-card">
         <h3>删除这条记录？</h3>
-        <p class="del-sub">{{ deleteExplain }}</p>
         <div class="del-acts">
-          <button class="ghost-btn" @click="pendingDelete = null">算了</button>
+          <button class="ghost-btn" @click="pendingDelete = null">取消</button>
           <button class="dark-btn" @click="confirmDelete">删除</button>
         </div>
       </div>
@@ -91,6 +87,7 @@
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReaderStore } from '@/apps/reading-assistant/stores/readerStore'
+import { listStudyRecords, deleteStudyRecord, type StudyRecord } from '@/shared/core/studyRecords'
 
 interface NoteEntry {
   /** 列表 key。同一篇文章可能有好几条（整篇笔记 + 各章笔记），光用 id 会撞 */
@@ -108,7 +105,9 @@ interface NoteEntry {
    * chapterNote 某一章的笔记（存在 a.chapterNotes[i]）
    * article     AI 生成的文章本身（正文在 a.sentences，没有笔记）
    */
-  kind: 'note' | 'chapterNote' | 'article'
+  kind: 'note' | 'chapterNote' | 'article' | 'dictation' | 'familyNote'
+  /** 听写正确率 */
+  score?: number
   /** 生成来源的中文标签，没有就不是 AI 生成的 */
   aiLabel?: string
   /** 编辑时要回填的原始 HTML */
@@ -140,6 +139,9 @@ function toPreview(html: string): string {
     return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140)
   }
 }
+
+const records = ref<StudyRecord[]>([])
+function isRecord(it: NoteEntry) { return it.kind === 'dictation' || it.kind === 'familyNote' }
 
 const items = computed<NoteEntry[]>(() => {
   const groupName = new Map(readerStore.groups.map(g => [g.id, g.name]))
@@ -218,6 +220,25 @@ const items = computed<NoteEntry[]>(() => {
     }
   }
 
+  for (const r of records.value) {
+    if (r.type === 'dictation') {
+      out.push({
+        key: r.id, id: r.id, title: `听写 · ${r.articleTitle}`, time: r.createdAt,
+        preview: `${r.items.length} 句 · 漏词 ${r.counts.miss} · 拼错 ${r.counts.typo}`,
+        chapterIdx: -1, kind: 'dictation', score: r.accuracy, html: ''
+      })
+    } else {
+      out.push({
+        key: r.id, id: r.id, title: `词族 · ${r.title}`, time: r.createdAt,
+        preview: (r.note.branches.length
+          ? r.note.branches.map(b => b.words.map(w => w.word).join(' ')).join(' · ')
+          : (r.note.tree?.children || []).map(c => [c.label, ...c.children.map(x => x.label)].join(' ')).join(' · ')
+        ).slice(0, 140),
+        chapterIdx: -1, kind: 'familyNote', html: ''
+      })
+    }
+  }
+
   return out.sort((a, b) => b.time.localeCompare(a.time))
 })
 
@@ -227,8 +248,9 @@ const filtered = computed(() => {
   let list = items.value
   if (groupFilter.value === '__none') list = list.filter(i => !i.groupId)
   else if (groupFilter.value) list = list.filter(i => i.groupId === groupFilter.value)
-  if (kindFilter.value === 'note') list = list.filter(i => i.kind !== 'article')
+  if (kindFilter.value === 'note') list = list.filter(i => i.kind === 'note' || i.kind === 'chapterNote')
   else if (kindFilter.value === 'ai') list = list.filter(i => i.kind === 'article')
+  else if (kindFilter.value) list = list.filter(i => i.kind === kindFilter.value)
   const k = keyword.value.trim().toLowerCase()
   if (k) list = list.filter(i => i.title.toLowerCase().includes(k) || i.preview.toLowerCase().includes(k))
   return list
@@ -297,15 +319,6 @@ async function saveEdit(it: NoteEntry) {
 
 const pendingDelete = ref<NoteEntry | null>(null)
 
-const deleteExplain = computed(() => {
-  const it = pendingDelete.value
-  if (!it) return ''
-  if (it.kind === 'article') return '这会把整篇文章删掉，正文一起没。'
-  const a = readerStore.articles.find(x => x.id === it.id)
-  // 纯笔记条目（没有正文的那种，比如场景实战记录）删掉笔记就等于整条没用了，直接删整篇
-  if (a && !a.sentences?.length) return '这条只有笔记、没有正文，会整条删掉。'
-  return '只删这条笔记，文章正文留着。'
-})
 
 function askDelete(it: NoteEntry) {
   pendingDelete.value = it
@@ -315,6 +328,11 @@ async function confirmDelete() {
   const it = pendingDelete.value
   if (!it) return
   pendingDelete.value = null
+  if (isRecord(it)) {
+    await deleteStudyRecord(it.id)
+    records.value = records.value.filter(r => r.id !== it.id)
+    return
+  }
   const a = readerStore.articles.find(x => x.id === it.id)
   if (!a) return
 
@@ -344,70 +362,75 @@ function formatDate(t: string): string {
 }
 
 function openSource(it: NoteEntry) {
+  if (it.kind === 'dictation') { router.push(`/dictation/record/${it.id}`); return }
+  if (it.kind === 'familyNote') { router.push({ path: '/universe', query: { note: it.id } }); return }
   readerStore.selectArticle(it.id)
   // 带上章号，阅读助手打开后直接翻到那一章的笔记页
   if (it.chapterIdx >= 0) sessionStorage.setItem('lb-open-note-page', String(it.chapterIdx))
   router.push('/reading')
 }
 
-onMounted(() => readerStore.loadArticles())
+onMounted(async () => {
+  readerStore.loadArticles()
+  records.value = await listStudyRecords()
+})
 </script>
 
 <style scoped lang="scss">
 .notes-page { max-width: 880px; margin: 0 auto; padding: 18px 20px 60px; }
 .page-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
 .title { font-size: 19px; margin: 0 0 4px; }
-.sub { font-size: 12.5px; color: var(--r-ink2, #888); margin: 0; line-height: 1.6; }
+.score-tag { font-weight: 700; color: var(--c-accent); font-size: var(--text-xs); }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
 .mini-select, .search {
-  padding: 6px 10px; border: 1px solid var(--r-border, #ddd); border-radius: 8px;
-  background: var(--r-ui, #fafafa); color: inherit; font-size: 13.5px;
+  padding: 6px 10px; border: 1px solid var(--c-line); border-radius: 8px;
+  background: var(--c-surface-2); color: inherit; font-size: 13.5px;
 }
 .search { flex: 1; min-width: 160px; }
-.count { font-size: 12.5px; color: var(--r-ink2, #999); }
-.empty { color: var(--r-ink2, #999); font-size: 13.5px; padding: 46px 0; text-align: center; line-height: 1.7; }
+.count { font-size: 12.5px; color: var(--c-text-2); }
+.empty { color: var(--c-text-2); font-size: 13.5px; padding: 46px 0; text-align: center; line-height: 1.7; }
 
 .timeline { list-style: none; padding: 0; margin: 0; }
 .entry {
   display: flex; gap: 16px; padding: 14px 0;
-  border-bottom: 1px solid var(--r-border, #eee);
+  border-bottom: 1px solid var(--c-line);
 }
 .entry-meta { width: 132px; flex-shrink: 0; display: flex; flex-direction: column; gap: 5px; }
-.date { font-size: 12.5px; color: var(--r-ink2, #999); }
+.date { font-size: 12.5px; color: var(--c-text-2); }
 .group-tag {
   font-size: 11.5px; padding: 2px 8px; border-radius: 9999px; align-self: flex-start;
-  background: var(--r-ui, #f0f0f0); color: var(--r-ink2, #777);
+  background: var(--c-surface-2); color: var(--c-text-2);
 }
 .entry-body { flex: 1; min-width: 0; }
 .entry-title {
   border: none; background: none; padding: 0; cursor: pointer;
-  font-size: 14.5px; font-weight: 600; color: var(--r-ink, #1c1c1c); text-align: left;
-  &:hover { color: var(--r-accent, #8a4b3a); }
+  font-size: 14.5px; font-weight: 600; color: var(--c-text); text-align: left;
+  &:hover { color: var(--c-accent); }
 }
 .entry-preview {
-  font-size: 13px; color: var(--r-ink2, #777); line-height: 1.7; margin: 5px 0 0;
+  font-size: 13px; color: var(--c-text-2); line-height: 1.7; margin: 5px 0 0;
 }
 .ai-tag {
   font-size: 11.5px; padding: 2px 8px; border-radius: 9999px; align-self: flex-start;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 12%, transparent);
-  color: var(--r-accent, #8a4b3a);
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  color: var(--c-accent);
 }
 .entry-acts { display: flex; gap: 8px; margin-top: 8px; }
 .tiny { font-size: 12px; padding: 3px 10px; border-radius: 7px; }
-.ghost-btn.danger:hover { color: #c0392b; }
+.ghost-btn.danger:hover { color: var(--c-danger); }
 .edit-title {
   width: 100%; padding: 6px 10px; font-family: inherit; font-size: 14.5px; font-weight: 600;
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px;
-  background: transparent; color: var(--r-ink, #1c1c1c);
+  border: 1px solid var(--c-line); border-radius: 8px;
+  background: transparent; color: var(--c-text);
 }
 .edit-body {
   margin-top: 8px; padding: 8px 10px; min-height: 76px;
-  border: 1px solid var(--r-border, #ddd); border-radius: 8px;
-  font-size: 13.5px; line-height: 1.7; color: var(--r-ink, #1c1c1c);
+  border: 1px solid var(--c-line); border-radius: 8px;
+  font-size: 13.5px; line-height: 1.7; color: var(--c-text);
   outline: none;
-  &:focus { border-color: var(--r-accent, #8a4b3a); }
+  &:focus { border-color: var(--c-accent); }
 }
-.edit-hint { font-size: 12px; color: var(--r-ink2, #999); margin: 6px 0 0; }
+.edit-hint { font-size: 12px; color: var(--c-text-2); margin: 6px 0 0; }
 
 .del-mask {
   position: fixed; inset: 0; z-index: 60;
@@ -415,12 +438,12 @@ onMounted(() => readerStore.loadArticles())
   background: rgba(0, 0, 0, .28);
 }
 .del-card {
-  background: var(--r-paper, #fff); border-radius: 14px; padding: 22px 24px;
+  background: var(--c-surface); border-radius: 14px; padding: 22px 24px;
   max-width: 340px; text-align: center;
   box-shadow: 0 14px 40px rgba(0, 0, 0, .18);
 }
 .del-card h3 { margin: 0 0 8px; font-size: 16px; }
-.del-sub { font-size: 13px; color: var(--r-ink2, #777); line-height: 1.7; margin: 0; }
+.del-sub { font-size: 13px; color: var(--c-text-2); line-height: 1.7; margin: 0; }
 .del-acts { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
 
 @media (max-width: 640px) {

@@ -666,20 +666,43 @@ export async function handleDataApi(req, res, store, urlPath) {
     const keep = new Map()
     for (const w of prev) {
       const k = String(w?.word ?? '').trim().toLowerCase()
-      if (k) keep.set(k, w)
+      if (!k) continue
+      // 旧缓存里本身就有重复时，优先留标过学习状态的那条（词表多半引用它）
+      const old = keep.get(k)
+      if (!old || ((!old.status || old.status === 'unmarked') && w.status && w.status !== 'unmarked')) keep.set(k, w)
     }
 
     // 2. 扫词库，逐个映射
     const now = nowIso()
     const rebuilt = []
     let fromLib = 0
+    /**
+     * 同一个词在词库里可能有好几个文件（不同批次补全留下的）。
+     * 之前每个文件都生成一条，第一条接上旧 id，其余的拿新 id —— 每重建一次就多出一批重复词条，
+     * 设置里合并完，再点一次重建又全回来了。现在同一个词只出一条，其余文件只补缺失字段。
+     */
+    const builtByWord = new Map()
+    let mergedFiles = 0
+    const fillMissing = (dst, src) => {
+      for (const [f, v] of Object.entries(src)) {
+        if (f === 'id' || v == null) continue
+        const cur = dst[f]
+        const empty = cur == null || cur === '' || (Array.isArray(cur) && !cur.length)
+        if (empty) dst[f] = v
+      }
+      if (!dst.meanings?.some(m => m?.chinese?.trim()) && src.meanings?.some(m => m?.chinese?.trim())) dst.meanings = src.meanings
+    }
     for (const f of readdirSync(dir)) {
       if (!f.toLowerCase().endsWith('.json')) continue
       try {
         const doc = JSON.parse(readFileSync(join(dir, f), 'utf-8'))
         const item = mapToWordItem(doc, now)
         if (!item) continue
-        const old = keep.get(item.word.toLowerCase())
+        const wk = item.word.toLowerCase()
+        const already = builtByWord.get(wk)
+        if (already) { fillMissing(already, item); mergedFiles++; continue }
+        builtByWord.set(wk, item)
+        const old = keep.get(wk)
         if (old) {
           // 词条内容以词库为准，学习状态以旧缓存为准，各取各的
           item.id = old.id
@@ -708,9 +731,28 @@ export async function handleDataApi(req, res, store, urlPath) {
     for (const w of keep.values()) { rebuilt.push(w); kept++ }
 
     store.writeCollection('words', rebuilt)
+
+    // 旧缓存里被合并掉的重复条目，词书里引用的 id 改指向留下的那条
+    const finalId = new Map(rebuilt.map(w => [String(w.word || '').toLowerCase(), w.id]))
+    const remap = new Map()
+    for (const w of prev) {
+      const k = String(w?.word ?? '').trim().toLowerCase()
+      const to = finalId.get(k)
+      if (to && w.id && w.id !== to) remap.set(w.id, to)
+    }
+    let groupsFixed = 0
+    if (remap.size) {
+      const groups = store.readCollection('word_groups')
+      for (const g of groups) {
+        if (!Array.isArray(g.wordIds)) continue
+        const ids = [...new Set(g.wordIds.map(id => remap.get(id) || id))]
+        if (ids.length !== g.wordIds.length || ids.some((id, i) => id !== g.wordIds[i])) { g.wordIds = ids; groupsFixed++ }
+      }
+      if (groupsFixed) store.writeCollection('word_groups', groups)
+    }
     // 缓存重建了，分类索引也跟着重建一次，两者才对得上
     buildWordFileIndex(dir, true)
-    sendJson(res, 200, { ok: true, total: rebuilt.length, fromLib, keptLocalOnly: kept })
+    sendJson(res, 200, { ok: true, total: rebuilt.length, fromLib, keptLocalOnly: kept, mergedFiles, groupsFixed })
     return true
   }
 
@@ -831,6 +873,37 @@ export async function handleDataApi(req, res, store, urlPath) {
     if (method === 'DELETE') {
       const ok = store.remove('todos', id)
       if (!ok) return sendJson(res, 404, { detail: '待办不存在' }), true
+      sendJson(res, 200, { ok: true })
+      return true
+    }
+  }
+
+  // ===== 外部词汇数据（ECDICT 的 resemble.txt / wordroot.txt，放在资源目录 ecdict/ 下，可选） =====
+  m = urlPath.match(/^\/api\/lexicon\/(resemble|wordroot)$/)
+  if (m && method === 'GET') {
+    const file = join(store.RESOURCES_DIR, 'ecdict', m[1] === 'resemble' ? 'resemble.txt' : 'wordroot.txt')
+    if (!existsSync(file)) return sendJson(res, 404, { detail: '未放置' }), true
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
+    res.end(readFileSync(file, 'utf8'))
+    return true
+  }
+
+  // ===== 学习记录（逐句听写结果、词族笔记等，按 type 区分） =====
+  if (urlPath === '/api/study-records' && method === 'GET') {
+    sendJson(res, 200, store.readCollection('study_records'))
+    return true
+  }
+  m = urlPath.match(/^\/api\/study-records\/([^/]+)$/)
+  if (m) {
+    const id = decodeURIComponent(m[1])
+    if (method === 'PUT') {
+      const payload = await readJsonBody(req)
+      if (payload.id !== id) return sendJson(res, 400, { detail: 'id 不一致' }), true
+      sendJson(res, 200, store.upsert('study_records', payload))
+      return true
+    }
+    if (method === 'DELETE') {
+      store.remove('study_records', id)
       sendJson(res, 200, { ok: true })
       return true
     }

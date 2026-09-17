@@ -1,9 +1,9 @@
 <template>
   <div class="study-page">
-    <button class="quit-corner" title="退出" @click="quit">←</button>
+    <BackLink title="退出" label="返回" @back="quit" />
 
     <main class="study-body">
-      <p v-if="isWrongRound" class="wrong-round-tip">错词重练 · 这一轮里打错过的词，全部答对才进下一阶段</p>
+      <p v-if="isWrongRound" class="wrong-round-tip">错词重练</p>
 
 
       <!-- 上次没练完：问一句接着练还是重开 -->
@@ -41,7 +41,7 @@
            全屏遮罩挡在这儿等于把人钉住什么都干不了。 -->
       <div v-if="syllabusNotice" class="sy-bar">
         <span>教材在后台准备中，进度看右下角。这一轮先按原顺序学，课文写好后会插进来。</span>
-        <button class="sy-x" @click="syllabusNotice = false">×</button>
+        <CloseButton class="sy-x" @click="syllabusNotice = false" small />
       </div>
 
       <!-- 教材里的一段。学完这一段的词才放出来，不跳页，读完接着背 -->
@@ -82,7 +82,6 @@
       <div v-if="fullPodcast" class="scen-mask">
         <div class="scen-card wide">
           <p class="scen-title">{{ fullPodcast.title }}</p>
-          <p class="scen-sub">这一篇的几段都读完了，这是完整的一篇</p>
           <div class="sec-body tall">
             <div v-for="(ln, i) in fullLines" :key="i" class="sec-line">
               <p class="sec-en">
@@ -161,7 +160,7 @@
       </div>
 
       <!-- pendingSnapshot 期间 currentList 还没填，别在续练框后面露出「没有可学的词」 -->
-      <p v-if="!currentWord && !finished && !scenarioPrompt.length && !pendingSnapshot" class="empty">没有可学的词，去词汇中心导入词书，或调大每日学习量。</p>
+      <p v-if="!currentWord && !finished && !scenarioPrompt.length && !pendingSnapshot" class="empty">暂无</p>
     </main>
 
     <div class="panel-wrap" :class="{ 'has-panel': showPanel }" @click.self="showPanel = false">
@@ -188,9 +187,7 @@
     </div>
 
     <div class="footer-wrap" :class="{ hide: !showToolbar }">
-      <button class="fold-arrow" :title="showToolbar ? '收起' : '展开'" @click="showToolbar = !showToolbar">
-        {{ showToolbar ? '▾' : '▴' }}
-      </button>
+      <FoldToggle class="fold-arrow" side="down" :folded="!showToolbar" @update:folded="v => showToolbar = !v" />
       <div class="footer-card">
         <div class="stage-track">
           <div
@@ -1190,9 +1187,9 @@ onUnmounted(() => {
 .quit-corner {
   position: fixed; left: calc(var(--lb-nav-w, 56px) + 14px); top: 14px; z-index: 30;
   width: 30px; height: 30px; border: none; border-radius: 8px;
-  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #8a9099);
+  background: var(--c-surface-2); color: var(--c-text-2);
   font-size: 15px; cursor: pointer;
-  &:hover { color: var(--r-ink, #1f2328); }
+  &:hover { color: var(--c-text); }
 }
 
 
@@ -1211,36 +1208,36 @@ onUnmounted(() => {
 }
 .fold-arrow {
   position: absolute; left: 50%; top: -22px; transform: translateX(-50%);
-  border: none; background: none; color: var(--r-ink2, #b8bec6);
+  border: none; background: none; color: var(--c-text-2);
   font-size: 13px; cursor: pointer; padding: 4px 12px;
-  &:hover { color: var(--r-ink, #1f2328); }
+  &:hover { color: var(--c-text); }
 }
 .footer-card {
-  border-radius: 14px; background: var(--r-ui, #f4f5f7);
+  border-radius: 14px; background: var(--c-surface-2);
   box-shadow: 0 6px 22px rgba(0, 0, 0, .07);
   padding: 10px 16px 12px;
 }
 .stage-track { display: flex; gap: 4px; margin-bottom: 10px; }
 .stage-seg {
   flex: 1; height: 4px; border-radius: 2px; position: relative; overflow: hidden;
-  background: var(--r-border, #e5e7eb);
-  &.done { background: var(--r-ink2, #8a9099); }
-  i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--r-ink, #1f2328); transition: width .25s ease; }
+  background: var(--c-line);
+  &.done { background: var(--c-text-2); }
+  i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c-text); transition: width .25s ease; }
 }
 .footer-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
 .stat { display: flex; gap: 26px; }
 .stat .row { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; }
-.stat .num { font-size: 15px; color: var(--r-ink, #1f2328); line-height: 1.2; white-space: nowrap; }
+.stat .num { font-size: 15px; color: var(--c-text); line-height: 1.2; white-space: nowrap; }
 .stat .num.clickable { cursor: pointer; }
 .stat .num.paused { opacity: .45; }
-.stat .line { height: 1px; width: 100%; background: var(--r-border, #e5e7eb); }
-.stat .name { font-size: 11.5px; color: var(--r-ink2, #a0a6ad); white-space: nowrap; }
+.stat .line { height: 1px; width: 100%; background: var(--c-line); }
+.stat .name { font-size: 11.5px; color: var(--c-text-2); white-space: nowrap; }
 .tools { display: flex; gap: 4px; }
 .ticon {
-  border: none; background: none; color: var(--r-ink2, #a0a6ad);
+  border: none; background: none; color: var(--c-text-2);
   padding: 6px; border-radius: 7px; cursor: pointer; line-height: 0;
-  &:hover { color: var(--r-ink, #1f2328); background: var(--r-paper, #fff); }
-  &.on { color: var(--r-ink, #1f2328); background: var(--r-paper, #fff); }
+  &:hover { color: var(--c-text); background: var(--c-surface); }
+  &.on { color: var(--c-text); background: var(--c-surface); }
 }
 
 /* 照 PracticeLayout.vue 的 .panel-wrap：
@@ -1275,8 +1272,8 @@ onUnmounted(() => {
    合成一份，@media 放到它后面。 */
 .wl-body {
   height: 100%; display: flex; flex-direction: column;
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e5e7eb);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   border-radius: 12px; overflow: hidden;
   box-shadow: 0 6px 24px rgba(0, 0, 0, .07);
 }
@@ -1288,23 +1285,23 @@ onUnmounted(() => {
 .wl-title {
   display: flex; justify-content: space-between; align-items: center;
   gap: 10px;
-  padding: 14px 14px 10px; font-size: 14px; color: var(--r-ink, #1f2328);
+  padding: 14px 14px 10px; font-size: 14px; color: var(--c-text);
 }
-.wl-count { font-size: 12px; color: var(--r-ink2, #a0a6ad); }
+.wl-count { font-size: 12px; color: var(--c-text-2); }
 .wl-list { flex: 1; overflow: auto; padding: 0 8px 16px; }
 .wl-item {
   padding: 8px 10px; border-radius: 8px; cursor: pointer;
   display: flex; flex-direction: column; gap: 2px;
-  &:hover { background: var(--r-ui, #f4f5f7); }
-  &.on { background: var(--r-ui, #f4f5f7); }
-  &.done .wl-w { color: var(--r-ink2, #b8bec6); }
+  &:hover { background: var(--c-surface-2); }
+  &.on { background: var(--c-surface-2); }
+  &.done .wl-w { color: var(--c-text-2); }
 }
-.wl-w { font-size: 14px; color: var(--r-ink, #1f2328); }
-.wl-t { font-size: 12px; color: var(--r-ink2, #a0a6ad); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-w { font-size: 14px; color: var(--c-text); }
+.wl-t { font-size: 12px; color: var(--c-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wrong-round-tip {
   text-align: center;
   font-size: 13px;
-  color: #d9822b;
+  color: var(--c-warn);
   background: rgba(217, 130, 43, 0.08);
   padding: 6px 12px;
   border-radius: 8px;
@@ -1317,14 +1314,14 @@ onUnmounted(() => {
 .settle-card {
   min-width: 96px;
   padding: 14px 18px;
-  border: 1px solid var(--r-border, #e4e4e4);
+  border: 1px solid var(--c-line);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 .settle-card .num { font-size: 22px; font-weight: 600; }
-.settle-card .lbl { font-size: 12px; color: var(--r-ink2, #888); }
+.settle-card .lbl { font-size: 12px; color: var(--c-text-2); }
 .settle-cols {
   display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
   margin: 20px auto 0; max-width: 560px;
@@ -1332,27 +1329,27 @@ onUnmounted(() => {
 .week-box, .prog-box {
   flex: 1; min-width: 220px;
   padding: 14px 16px;
-  border: 1px solid var(--r-border, #e4e4e4);
+  border: 1px solid var(--c-line);
   border-radius: 12px;
   text-align: left;
 }
-.box-title { font-size: 13px; color: var(--r-ink2, #888); }
+.box-title { font-size: 13px; color: var(--c-text-2); }
 .week-row { display: flex; gap: 6px; margin-top: 10px; }
 .week-cell {
   flex: 1; text-align: center; padding: 7px 0;
   border-radius: 8px; font-size: 12.5px;
-  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #9aa0a6);
+  background: var(--c-surface-2); color: var(--c-text-2);
 }
-.week-cell.on { background: var(--r-accent, #8a4b3a); color: #fff; }
-.week-cell.today { outline: 1.5px solid var(--r-accent, #8a4b3a); outline-offset: 1px; }
+.week-cell.on { background: var(--c-accent); color: var(--c-text-on-accent); }
+.week-cell.today { outline: 1.5px solid var(--c-accent); outline-offset: 1px; }
 .prog-head { display: flex; align-items: center; justify-content: space-between; }
-.prog-pct { font-size: 18px; font-weight: 600; color: var(--r-accent, #8a4b3a); }
+.prog-pct { font-size: 18px; font-weight: 600; color: var(--c-accent); }
 .prog-bar {
   height: 8px; margin: 10px 0 8px;
-  background: var(--r-ui, #f4f5f7); border-radius: 999px; overflow: hidden;
+  background: var(--c-surface-2); border-radius: 999px; overflow: hidden;
 }
-.prog-bar i { display: block; height: 100%; background: var(--r-accent, #8a4b3a); transition: width .4s; }
-.prog-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--r-ink2, #888); }
+.prog-bar i { display: block; height: 100%; background: var(--c-accent); transition: width .4s; }
+.prog-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--c-text-2); }
 
 .wrong-summary { margin: 26px auto 0; max-width: 420px; text-align: left; }
 .wrong-summary h3 { font-size: 14px; margin: 0 0 8px; }
@@ -1361,18 +1358,18 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   padding: 5px 0;
-  border-bottom: 1px solid var(--r-border, #eee);
+  border-bottom: 1px solid var(--c-line);
   font-size: 13.5px;
 }
-.wrong-summary .t { color: #d9534f; }
+.wrong-summary .t { color: var(--c-danger); }
 .settle-actions { display: flex; gap: 10px; justify-content: center; margin-top: 26px; flex-wrap: wrap; }
-.empty { text-align: center; color: var(--r-ink2, #999); padding: 60px 0; }
+.empty { text-align: center; color: var(--c-text-2); padding: 60px 0; }
 .scope-label {
   font-size: 12px;
-  color: var(--r-ink2, #999);
+  color: var(--c-text-2);
   padding: 2px 8px;
   border-radius: 9999px;
-  background: var(--r-ui, #f4f4f4);
+  background: var(--c-surface-2);
   white-space: nowrap;
   max-width: 260px;
   overflow: hidden;
@@ -1386,17 +1383,17 @@ onUnmounted(() => {
 }
 .scen-card {
   width: min(460px, 100%); border-radius: 14px; padding: 24px;
-  background: var(--r-paper, #fff); color: var(--r-ink, #222);
+  background: var(--c-surface); color: var(--c-text);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22); text-align: center;
 }
 .scen-title { margin: 0; font-size: 19px; font-weight: 700; }
-.scen-sub { margin: 8px 0 16px; font-size: 13px; color: var(--r-ink2, #888); }
+.scen-sub { margin: 8px 0 16px; font-size: 13px; color: var(--c-text-2); }
 .scen-words {
   display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 20px;
 }
 .scen-words span {
   padding: 3px 9px; border-radius: 7px; font-size: 12.5px;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 9%, transparent);
+  background: color-mix(in srgb, var(--c-accent) 9%, transparent);
 }
 .scen-acts { display: flex; gap: 10px; justify-content: center; }
 
@@ -1408,12 +1405,12 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, .28);
 }
 .resume-card {
-  background: var(--r-bg, #fff); border-radius: 16px; padding: 24px 26px;
+  background: var(--r-bg, var(--c-surface)); border-radius: 16px; padding: 24px 26px;
   max-width: 380px; text-align: center;
   box-shadow: 0 14px 40px rgba(0, 0, 0, .18);
 }
 .resume-card h3 { margin: 0 0 8px; font-size: 17px; }
-.resume-sub { font-size: 13.5px; color: var(--r-ink2, #6b7280); line-height: 1.7; margin: 0; }
+.resume-sub { font-size: 13.5px; color: var(--c-text-2); line-height: 1.7; margin: 0; }
 .resume-acts { display: flex; gap: 10px; justify-content: center; margin: 16px 0 10px; }
 
 /* 教材段落面板 */
@@ -1424,21 +1421,21 @@ onUnmounted(() => {
 }
 .sec-body.tall { max-height: 56vh; }
 .sec-line { margin-bottom: 12px; }
-.sec-en { margin: 0; font-size: 15.5px; line-height: 1.75; color: var(--r-ink, #1f2328); }
-.sec-zh { margin: 2px 0 0; font-size: 13.5px; line-height: 1.7; color: var(--r-ink2, #8a9099); }
+.sec-en { margin: 0; font-size: 15.5px; line-height: 1.75; color: var(--c-text); }
+.sec-zh { margin: 2px 0 0; font-size: 13.5px; line-height: 1.7; color: var(--c-text-2); }
 .sec-tk { cursor: help; border-radius: 3px; }
-.sec-tk:hover { background: var(--r-ui, #eef1f4); }
+.sec-tk:hover { background: var(--c-surface-2); }
 
 /* 教材准备中的横幅：贴在顶部，不挡内容 */
 .sy-bar {
   display: flex; align-items: center; gap: 10px;
   margin: 0 auto 10px; padding: 7px 14px;
   max-width: 720px; border-radius: 999px;
-  background: var(--r-ui, #f4f5f7); color: var(--r-ink2, #6b7280);
+  background: var(--c-surface-2); color: var(--c-text-2);
   font-size: 12.5px; line-height: 1.6;
 }
 .sy-x {
   margin-left: auto; border: none; background: none; cursor: pointer;
-  color: var(--r-ink2, #9aa0a6); font-size: 15px; line-height: 1;
+  color: var(--c-text-2); font-size: 15px; line-height: 1;
 }
 </style>

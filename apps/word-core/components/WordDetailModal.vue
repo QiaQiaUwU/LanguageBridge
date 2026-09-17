@@ -10,7 +10,7 @@
         </div>
         <div class="header-actions">
           <button class="edit-toggle-btn" @click="editing ? cancelEdit() : startEdit()">{{ editing ? '取消' : '编辑' }}</button>
-          <button class="close-btn" @click="emit('close')">×</button>
+          <CloseButton class="close-btn" @click="emit('close')" />
         </div>
       </div>
 
@@ -30,14 +30,14 @@
           <div v-if="editing" class="detail-block edit-block">
             <h4 class="block-title">编辑</h4>
             <label class="edit-label">音标</label>
-            <input v-model="editDraft.phonetic" class="edit-input" placeholder="/例如 ɪɡˈzæmpl/" />
+            <input v-model="editDraft.phonetic" class="edit-input" placeholder="音标" />
             <label class="edit-label">词性及释义</label>
             <div class="edit-meaning-row" v-for="(m, i) in editDraft.meanings" :key="i">
-              <input v-model="m.partOfSpeech" class="edit-input pos-input" placeholder="词性，如 n." />
+              <input v-model="m.partOfSpeech" class="edit-input pos-input" placeholder="词性" />
               <input v-model="m.chinese" class="edit-input" placeholder="中文释义" />
-              <button class="edit-del-row" @click="editDraft.meanings.splice(i, 1)">×</button>
+              <CloseButton class="edit-del-row" @click="editDraft.meanings.splice(i, 1)" small />
             </div>
-            <button class="ghost-btn small" @click="editDraft.meanings.push({ chinese: '', partOfSpeech: '' })">+ 加一条释义</button>
+            <button class="ghost-btn small" @click="editDraft.meanings.push({ chinese: '', partOfSpeech: '' })" title="添加释义">＋</button>
             <div class="edit-actions">
               <button class="dark-btn" @click="saveEdit">保存</button>
             </div>
@@ -475,7 +475,7 @@ function formatDate(dateStr?: string): string {
   z-index: auto;
 }
 .modal-overlay.inline .modal-content {
-  background-color: var(--r-paper, #fff);
+  background-color: var(--c-surface);
   max-width: none;
   max-height: none;
   height: 100%;
@@ -489,7 +489,7 @@ function formatDate(dateStr?: string): string {
   justify-content: space-between;
   align-items: flex-start;
   padding: 20px 24px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--c-line);
 }
 
 .word-info {
@@ -502,12 +502,12 @@ function formatDate(dateStr?: string): string {
 .word-info h2 {
   font-size: 26px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--c-text);
   margin: 0;
 }
 
 .phonetic {
-  color: #888;
+  color: var(--c-text-2);
   font-size: 14px;
 }
 
@@ -530,54 +530,46 @@ function formatDate(dateStr?: string): string {
 
 .header-actions { display: flex; align-items: center; gap: 4px; }
 .edit-toggle-btn {
-  background: none; border: 1px solid var(--r-border, #ddd); color: #555; cursor: pointer; padding: 5px 12px; border-radius: 6px; font-size: 12.5px;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent); }
+  background: none; border: 1px solid var(--c-line); color: var(--c-text-2); cursor: pointer; padding: 5px 12px; border-radius: 6px; font-size: 12.5px;
+  &:hover { background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface)); border-color: color-mix(in srgb, var(--c-accent) 42%, transparent); }
 }
 .close-btn {
   background: none;
   border: none;
   font-size: 24px;
-  color: #999;
+  color: var(--c-text-2);
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 4px;
   transition: all 0.2s;
 }
 
-.edit-block { background: #fafafa; border-radius: 10px; padding: 14px 16px; }
-.edit-label { display: block; font-size: 12px; color: #666; margin: 10px 0 5px; &:first-of-type { margin-top: 0; } }
+.edit-block { background: var(--c-surface-2); border-radius: 10px; padding: 14px 16px; }
+.edit-label { display: block; font-size: 12px; color: var(--c-text-2); margin: 10px 0 5px; &:first-of-type { margin-top: 0; } }
 .edit-input {
-  width: 100%; border: 1px solid var(--r-border, #ddd); border-radius: 7px; padding: 8px 10px; font-size: 13.5px; outline: none; margin-bottom: 6px;
+  width: 100%; border: 1px solid var(--c-line); border-radius: 7px; padding: 8px 10px; font-size: 13.5px; outline: none; margin-bottom: 6px;
   &:focus { border-color: #999; }
 }
 .edit-meaning-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .edit-meaning-row .edit-input { margin-bottom: 0; }
 .pos-input { max-width: 80px; flex-shrink: 0; }
-.edit-del-row { border: none; background: none; color: #ccc; cursor: pointer; font-size: 16px; flex-shrink: 0; &:hover { color: #b05a4a; } }
+.edit-del-row { border: none; background: none; color: #ccc; cursor: pointer; font-size: 16px; flex-shrink: 0; &:hover { color: var(--c-danger); } }
 .edit-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
-.ghost-btn {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  border: 1px solid color-mix(in srgb, var(--r-accent, #8a4b3a) 24%, transparent);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
-  color: var(--r-ink, #3a3128); cursor: pointer; padding: 6px 12px; border-radius: 7px; font-size: 12.5px;
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff)); border-color: color-mix(in srgb, var(--r-accent, #8a4b3a) 42%, transparent); }
-  &.small { padding: 5px 10px; font-size: 12px; }
-}
 .dark-btn {
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--r-accent, #8a4b3a) 22%, transparent);
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--r-accent, #8a4b3a); color: #fff; cursor: pointer; padding: 8px 20px; border-radius: 7px; font-size: 13px; &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); } }
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--c-accent) 22%, transparent);
+  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; border: none; background: var(--c-accent); color: var(--c-text-on-accent); cursor: pointer; padding: 8px 20px; border-radius: 7px; font-size: 13px; &:hover { background: color-mix(in srgb, var(--c-accent) 82%, #000); } }
 
 .close-btn:hover {
-  color: #333;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff));
+  color: var(--c-text);
+  background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface));
 }
 
 .tab-nav {
   display: flex;
   gap: 4px;
   padding: 0 24px;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff));
-  border-bottom: 1px solid #eee;
+  background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface));
+  border-bottom: 1px solid var(--c-line);
 }
 
 .tab-btn {
@@ -585,7 +577,7 @@ function formatDate(dateStr?: string): string {
   border: none;
   background: none;
   font-size: 13px;
-  color: #666;
+  color: var(--c-text-2);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
@@ -593,7 +585,7 @@ function formatDate(dateStr?: string): string {
 }
 
 .tab-btn:hover {
-  color: #333;
+  color: var(--c-text);
 }
 
 .tab-btn.active {
@@ -615,7 +607,7 @@ function formatDate(dateStr?: string): string {
 }
 
 .detail-block {
-  background: #fafafa;
+  background: var(--c-surface-2);
   border-radius: 8px;
   padding: 16px;
 }
@@ -628,7 +620,7 @@ function formatDate(dateStr?: string): string {
 .block-title {
   font-size: 13px;
   font-weight: 600;
-  color: #666;
+  color: var(--c-text-2);
   margin: 0 0 12px 0;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -642,7 +634,7 @@ function formatDate(dateStr?: string): string {
 
 .pronunciation-text {
   font-size: 16px;
-  color: #333;
+  color: var(--c-text);
   font-style: italic;
 }
 
@@ -650,16 +642,16 @@ function formatDate(dateStr?: string): string {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid var(--r-border, #ddd);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  border: 1px solid var(--c-line);
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   cursor: pointer;
   font-size: 12px;
-  color: #333;
+  color: var(--c-text);
   transition: all 0.2s;
 }
 
 .speak-btn:hover {
-  background: #f0f0f0;
+  background: var(--c-surface-2);
 }
 
 .speak-btn.speaking {
@@ -670,12 +662,12 @@ function formatDate(dateStr?: string): string {
 
 .speak-btn-sm {
   padding: 3px 6px;
-  border: 1px solid var(--r-border, #ddd);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  border: 1px solid var(--c-line);
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   border-radius: 4px;
   cursor: pointer;
   font-size: 11px;
-  color: #666;
+  color: var(--c-text-2);
   margin-left: 8px;
   display: inline-flex;
   align-items: center;
@@ -684,7 +676,7 @@ function formatDate(dateStr?: string): string {
 }
 
 .speak-btn-sm:hover {
-  background: #f0f0f0;
+  background: var(--c-surface-2);
 }
 
 .definitions-list {
@@ -714,14 +706,14 @@ function formatDate(dateStr?: string): string {
 
 .definition-zh {
   font-size: 15px;
-  color: #333;
+  color: var(--c-text);
   margin: 0 0 4px 0;
   line-height: 1.5;
 }
 
 .definition-en {
   font-size: 13px;
-  color: #666;
+  color: var(--c-text-2);
   font-style: italic;
   margin: 0;
 }
@@ -743,18 +735,18 @@ function formatDate(dateStr?: string): string {
 
 .morph-label {
   font-size: 11px;
-  color: #888;
+  color: var(--c-text-2);
 }
 
 .morph-value {
   font-size: 14px;
-  color: #333;
+  color: var(--c-text);
   font-weight: 500;
 }
 
 .block-text {
   font-size: 14px;
-  color: #444;
+  color: var(--c-text);
   line-height: 1.6;
   margin: 0;
 }
@@ -767,7 +759,7 @@ function formatDate(dateStr?: string): string {
 
 .phrase-item {
   padding-bottom: 12px;
-  border-bottom: 1px dashed #eee;
+  border-bottom: 1px dashed var(--c-line);
 }
 
 .phrase-item:last-child {
@@ -783,30 +775,30 @@ function formatDate(dateStr?: string): string {
 
 .phrase-en {
   font-size: 15px;
-  color: #333;
+  color: var(--c-text);
   font-weight: 500;
 }
 
 .phrase-zh {
   font-size: 13px;
-  color: #666;
+  color: var(--c-text-2);
   margin-left: 4px;
 }
 
 .phrase-example {
   margin-top: 8px;
   padding: 8px 12px;
-  background: #f5f5f5;
+  background: var(--c-surface-2);
   border-radius: 6px;
   font-size: 13px;
 }
 
 .example-en {
-  color: #333;
+  color: var(--c-text);
 }
 
 .example-zh {
-  color: #666;
+  color: var(--c-text-2);
   margin-top: 4px;
 }
 
@@ -844,20 +836,20 @@ function formatDate(dateStr?: string): string {
 
 .example-en {
   font-size: 14px;
-  color: #333;
+  color: var(--c-text);
   line-height: 1.5;
   margin: 0;
 }
 
 .example-zh {
   font-size: 13px;
-  color: #666;
+  color: var(--c-text-2);
   margin: 4px 0 0 0;
 }
 
 .example-note {
   font-size: 12px;
-  color: #888;
+  color: var(--c-text-2);
   margin: 4px 0 0 0;
   font-style: italic;
 }
@@ -965,11 +957,11 @@ function formatDate(dateStr?: string): string {
 .synonym-difference {
   margin: 6px 0 0 0;
   font-size: 13px;
-  color: #666;
+  color: var(--c-text-2);
 }
 
 .diff-label {
-  color: #888;
+  color: var(--c-text-2);
 }
 
 .learning-stats {
@@ -980,7 +972,7 @@ function formatDate(dateStr?: string): string {
 }
 
 .stat-card {
-  background: #fafafa;
+  background: var(--c-surface-2);
   padding: 14px;
   border-radius: 8px;
   text-align: center;
@@ -988,7 +980,7 @@ function formatDate(dateStr?: string): string {
 
 .stat-label {
   font-size: 12px;
-  color: #888;
+  color: var(--c-text-2);
   display: block;
   margin-bottom: 6px;
 }
@@ -996,7 +988,7 @@ function formatDate(dateStr?: string): string {
 .stat-value {
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--c-text);
 }
 
 .stat-value.large {
@@ -1026,10 +1018,10 @@ function formatDate(dateStr?: string): string {
 
 .tag-chip {
   padding: 4px 12px;
-  background: #f0f0f0;
+  background: var(--c-surface-2);
   border-radius: 12px;
   font-size: 12px;
-  color: #666;
+  color: var(--c-text-2);
 }
 
 .modal-footer {
@@ -1037,14 +1029,14 @@ function formatDate(dateStr?: string): string {
   justify-content: flex-end;
   gap: 10px;
   padding: 14px 24px;
-  border-top: 1px solid #eee;
-  background-color: #fafafa;
+  border-top: 1px solid var(--c-line);
+  background-color: var(--c-surface-2);
 }
 
 .btn {
   padding: 8px 16px;
-  border: 1px solid var(--r-border, #ddd);
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 5%, var(--r-paper, #fff));
+  border: 1px solid var(--c-line);
+  background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface));
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
@@ -1052,7 +1044,7 @@ function formatDate(dateStr?: string): string {
 }
 
 .btn:hover {
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff));
+  background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface));
 }
 
 .btn.primary {
@@ -1066,8 +1058,8 @@ function formatDate(dateStr?: string): string {
 }
 
 .btn.secondary {
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 13%, var(--r-paper, #fff));
-  color: #666;
+  background: color-mix(in srgb, var(--c-accent) 13%, var(--c-surface));
+  color: var(--c-text-2);
 }
 
 @media (max-width: 480px) {
@@ -1100,11 +1092,11 @@ function formatDate(dateStr?: string): string {
   gap: 2px;
   padding: 8px 12px;
   border-radius: 9px;
-  background: var(--r-ui, #f4f4f4);
+  background: var(--c-surface-2);
   min-width: 76px;
 }
 .mp-form { font-size: 15px; font-weight: 600; font-family: ui-monospace, Menlo, Consolas, monospace; }
-.mp-meaning { font-size: 12.5px; color: var(--r-ink2, #777); }
-.mp-kind { font-size: 11px; color: var(--r-ink2, #aaa); }
-.morpheme-part.root .mp-form { color: var(--r-accent, #8a4b3a); }
+.mp-meaning { font-size: 12.5px; color: var(--c-text-2); }
+.mp-kind { font-size: 11px; color: var(--c-text-2); }
+.morpheme-part.root .mp-form { color: var(--c-accent); }
 </style>

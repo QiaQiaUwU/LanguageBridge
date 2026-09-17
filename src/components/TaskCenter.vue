@@ -4,7 +4,7 @@
       <span v-if="runningNum()" class="tc-spin"></span>
       <span v-else class="tc-check">✓</span>
       <span class="tc-title">{{ headText }}</span>
-      <span class="tc-fold">{{ folded ? '展开' : '收起' }}</span>
+      <i class="tc-fold" :class="folded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'"></i>
     </button>
 
     <div v-if="!folded" class="tc-list">
@@ -24,7 +24,7 @@
 
         <div v-if="t.detail" class="tc-detail" :class="t.status">{{ t.detail }}</div>
         <div v-if="t.status === 'running' && isStalled(t)" class="tc-stall">
-          已经三分钟没有新进度了，可能卡住了，可以停掉重来
+          可能卡住
         </div>
 
         <div v-if="t.status === 'running'" class="tc-bar">
@@ -82,14 +82,10 @@ const headText = computed(() => {
 
 <style scoped lang="scss">
 .task-center {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 800;
-  width: 280px;
+  width: 100%;
   border-radius: 12px;
-  background: var(--r-paper, #fff);
-  border: 1px solid var(--r-border, #e5e7eb);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
   box-shadow: 0 8px 26px rgba(0, 0, 0, .16);
   overflow: hidden;
   font-size: 13px;
@@ -99,30 +95,30 @@ const headText = computed(() => {
   display: flex; align-items: center; gap: 8px;
   padding: 9px 12px; border: none; background: none;
   cursor: pointer; font-size: 13px; font-family: inherit;
-  color: var(--r-ink, #1f2328);
-  &:hover { background: var(--r-ui, #f5f6f8); }
+  color: var(--c-text);
+  &:hover { background: var(--c-surface-2); }
 }
 .tc-title { flex: 1; text-align: left; }
-.tc-fold { color: var(--r-ink2, #9aa0a6); font-size: 12px; }
+.tc-fold { color: var(--c-text-2); font-size: var(--icon); }
 .tc-spin {
   width: 12px; height: 12px; flex-shrink: 0;
-  border: 2px solid var(--r-border, #dfe3e8);
-  border-top-color: var(--r-accent, #8a4b3a);
+  border: 2px solid var(--c-line);
+  border-top-color: var(--c-accent);
   border-radius: 50%;
   animation: tcspin .8s linear infinite;
 }
-.tc-check { width: 12px; flex-shrink: 0; color: #3a8a5c; }
+.tc-check { width: 12px; flex-shrink: 0; color: var(--c-success); }
 @keyframes tcspin { to { transform: rotate(360deg); } }
 
-.tc-list { max-height: 300px; overflow-y: auto; border-top: 1px solid var(--r-border, #f0f0f0); }
-.tc-item { padding: 9px 12px; border-bottom: 1px solid var(--r-border, #f5f5f5); }
+.tc-list { max-height: 300px; overflow-y: auto; border-top: 1px solid var(--c-line); }
+.tc-item { padding: 9px 12px; border-bottom: 1px solid var(--c-line); }
 .tc-item:last-child { border-bottom: none; }
-.tc-item.error { background: color-mix(in srgb, #b5493c 5%, transparent); }
+.tc-item.error { background: color-mix(in srgb, var(--c-danger) 5%, transparent); }
 .tc-item.clickable { cursor: pointer; }
-.tc-item.clickable:hover { background: var(--r-ui, #f5f6f8); }
+.tc-item.clickable:hover { background: var(--c-surface-2); }
 /* 点掉时绿一下再收起，给个明确反馈 */
 .tc-item.leaving {
-  background: color-mix(in srgb, #3a8a5c 18%, transparent);
+  background: color-mix(in srgb, var(--c-success) 18%, transparent);
   opacity: 0;
   transform: translateX(12px);
   transition: opacity .25s ease, transform .25s ease, background-color .1s ease;
@@ -130,34 +126,34 @@ const headText = computed(() => {
 .tc-line { display: flex; align-items: center; gap: 6px; }
 .tc-kind {
   flex-shrink: 0; padding: 1px 6px; border-radius: 5px; font-size: 11.5px;
-  background: color-mix(in srgb, var(--r-accent, #8a4b3a) 12%, transparent);
-  color: var(--r-accent, #8a4b3a);
-  &.done { background: color-mix(in srgb, #3a8a5c 14%, transparent); color: #3a8a5c; }
-  &.error { background: color-mix(in srgb, #b5493c 14%, transparent); color: #b5493c; }
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  color: var(--c-accent);
+  &.done { background: color-mix(in srgb, var(--c-success) 14%, transparent); color: var(--c-success); }
+  &.error { background: color-mix(in srgb, var(--c-danger) 14%, transparent); color: var(--c-danger); }
 }
 .tc-subject {
   flex: 1; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
-  color: var(--r-ink, #1f2328);
+  color: var(--c-text);
 }
 .tc-btn {
   flex-shrink: 0; border: none; background: none; cursor: pointer;
-  color: var(--r-ink2, #9aa0a6); font-size: 12px;
-  &:hover { color: var(--r-accent, #8a4b3a); }
+  color: var(--c-text-2); font-size: 12px;
+  &:hover { color: var(--c-accent); }
 }
 .tc-detail {
-  margin-top: 3px; color: var(--r-ink2, #9aa0a6); font-size: 12px;
+  margin-top: 3px; color: var(--c-text-2); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  &.error { color: #b5493c; white-space: normal; }
-  &.done { color: #3a8a5c; }
+  &.error { color: var(--c-danger); white-space: normal; }
+  &.done { color: var(--c-success); }
 }
-.tc-stall { margin-top: 4px; color: #b5843c; font-size: 11.5px; }
+.tc-stall { margin-top: 4px; color: var(--c-warn); font-size: 11.5px; }
 .tc-bar {
   margin-top: 6px; height: 3px; border-radius: 2px;
-  background: var(--r-border, #eef0f2); overflow: hidden;
+  background: var(--c-line); overflow: hidden;
 }
 .tc-fill {
-  height: 100%; background: var(--r-accent, #8a4b3a);
+  height: 100%; background: var(--c-accent);
   transition: width .25s ease;
 }
 .tc-fill.indeterminate { width: 40%; animation: tcslide 1.2s ease-in-out infinite; }
@@ -166,9 +162,9 @@ const headText = computed(() => {
   100% { margin-left: 100%; }
 }
 .tc-clear {
-  width: 100%; border: none; border-top: 1px solid var(--r-border, #f0f0f0);
+  width: 100%; border: none; border-top: 1px solid var(--c-line);
   background: none; cursor: pointer; padding: 7px;
-  font-size: 12px; font-family: inherit; color: var(--r-ink2, #9aa0a6);
-  &:hover { background: var(--r-ui, #f5f6f8); color: var(--r-ink, #1f2328); }
+  font-size: 12px; font-family: inherit; color: var(--c-text-2);
+  &:hover { background: var(--c-surface-2); color: var(--c-text); }
 }
 </style>

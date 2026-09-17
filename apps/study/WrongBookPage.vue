@@ -1,11 +1,8 @@
 <template>
   <div class="list-page">
     <header class="page-head">
-      <button class="ghost-btn small" @click="$router.push('/home')">← 主页</button>
-      <div>
-        <h2 class="title">错词本</h2>
-        <p class="sub">听写和默写里打错过的词，按次数累计。答对一次会自动移出。</p>
-      </div>
+      <BackLink label="主页" to="/home" />
+      <h2 class="title">错词本</h2>
     </header>
 
     <div class="toolbar">
@@ -13,12 +10,12 @@
         <button class="chip" :class="{ on: sortBy === 'recent' }" @click="sortBy = 'recent'">最近错的</button>
         <button class="chip" :class="{ on: sortBy === 'count' }" @click="sortBy = 'count'">错得最多</button>
       </div>
-      <input v-model="keyword" class="search" placeholder="搜索单词" />
+      <input v-model="keyword" class="search" placeholder="搜索" />
       <button class="dark-btn small" :disabled="!dictateIds.length" @click="dictateThese">
-        听写这些错词（{{ dictateIds.length }}）
+        听写（{{ dictateIds.length }}）
       </button>
       <button class="ghost-btn small" :disabled="!dictateIds.length" @click="studyThese">
-        进学习流程
+        学习
       </button>
       <button v-if="picked.size" class="ghost-btn small" @click="removePicked">
         移出（{{ picked.size }}）
@@ -28,7 +25,6 @@
     <section v-if="calendar.length" class="calendar">
       <div class="cal-head">
         <span class="sec-title">错词日历</span>
-        <span class="cal-hint">点某一天只看那天错的</span>
       </div>
       <div class="cal-row">
         <button
@@ -44,9 +40,7 @@
       </div>
     </section>
 
-    <p v-if="!filtered.length" class="empty">
-      {{ rows.length ? '当前筛选下没有错词。' : '还没有错词。听写或默写打错的词会自动进到这里。' }}
-    </p>
+    <EmptyState v-if="!filtered.length" />
 
     <ul v-else class="rows">
       <li v-for="r in filtered" :key="r.wordId" class="row">
@@ -157,39 +151,33 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 .list-page { max-width: 960px; margin: 0 auto; padding: 18px 20px 60px; }
-.page-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+.page-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
 .title { font-size: 19px; margin: 0 0 4px; }
-.sub { font-size: 12.5px; color: var(--r-ink2, #888); margin: 0; line-height: 1.6; }
+.sub { font-size: 12.5px; color: var(--c-text-2); margin: 0; line-height: 1.6; }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .chip-row { display: flex; gap: 6px; }
-.chip {
-  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  padding: 5px 12px; border-radius: 9999px; font-size: 13px; cursor: pointer;
-  border: 1px solid var(--r-border, #ddd); background: transparent; color: inherit;
-  &.on { background: var(--r-accent, #8a4b3a); color: var(--r-paper, #fff); border-color: transparent; }
-}
 .search {
-  padding: 6px 10px; border: 1px solid var(--r-border, #ddd); border-radius: 8px;
-  background: var(--r-ui, #fafafa); color: inherit; font-size: 13.5px; min-width: 160px; flex: 1;
+  padding: 6px 10px; border: 1px solid var(--c-line); border-radius: 8px;
+  background: var(--c-surface-2); color: inherit; font-size: 13.5px; min-width: 160px; flex: 1;
 }
 .calendar { margin-bottom: 16px; }
 .cal-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
-.sec-title { font-size: 13.5px; font-weight: 600; color: var(--r-ink2, #666); }
-.cal-hint { font-size: 12px; color: var(--r-ink2, #aaa); }
+.sec-title { font-size: 13.5px; font-weight: 600; color: var(--c-text-2); }
+.cal-hint { font-size: 12px; color: var(--c-text-2); }
 .cal-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
 .cal-cell {
   flex-shrink: 0; min-width: 56px; padding: 7px 6px; border-radius: 9px;
-  border: 1px solid var(--r-border, #eee); background: var(--r-ui, #f7f7f7);
+  border: 1px solid var(--c-line); background: var(--c-surface-2);
   cursor: pointer; display: flex; flex-direction: column; gap: 2px; color: inherit;
-  &.on { border-color: var(--r-accent, #8a4b3a); background: var(--r-paper, #fff); }
+  &.on { border-color: var(--c-accent); background: var(--c-surface); }
 }
-.cal-day { font-size: 11.5px; color: var(--r-ink2, #999); }
+.cal-day { font-size: 11.5px; color: var(--c-text-2); }
 .cal-count { font-size: 15px; font-weight: 600; }
-.empty { color: var(--r-ink2, #999); font-size: 13.5px; padding: 46px 0; text-align: center; line-height: 1.7; }
+.empty { color: var(--c-text-2); font-size: 13.5px; padding: 46px 0; text-align: center; line-height: 1.7; }
 .rows { list-style: none; padding: 0; margin: 0; }
 .row {
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 4px; border-bottom: 1px solid var(--r-border, #eee); font-size: 14px;
+  padding: 10px 4px; border-bottom: 1px solid var(--c-line); font-size: 14px;
 }
 .pick { display: flex; align-items: center; }
 .row .w { min-width: 130px; font-weight: 500; }
@@ -197,13 +185,13 @@ onMounted(async () => {
   min-width: 110px; font-size: 13px; color: #c0413c;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   text-decoration: line-through; text-decoration-color: rgba(192, 65, 60, 0.5);
-  &.none { color: var(--r-ink2, #bbb); text-decoration: none; font-style: italic; font-size: 12px; }
+  &.none { color: var(--c-text-2); text-decoration: none; font-style: italic; font-size: 12px; }
 }
-.row .zh { flex: 1; font-size: 13px; color: var(--r-ink2, #777); }
+.row .zh { flex: 1; font-size: 13px; color: var(--c-text-2); }
 .times {
   font-size: 11.5px; padding: 2px 8px; border-radius: 9999px;
-  background: var(--r-ui, #f0f0f0); color: var(--r-ink2, #888);
+  background: var(--c-surface-2); color: var(--c-text-2);
   &.hot { background: rgba(217, 83, 79, 0.12); color: #c0413c; }
 }
-.date { font-size: 12px; color: var(--r-ink2, #aaa); min-width: 76px; text-align: right; }
+.date { font-size: 12px; color: var(--c-text-2); min-width: 76px; text-align: right; }
 </style>

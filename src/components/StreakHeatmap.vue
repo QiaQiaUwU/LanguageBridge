@@ -34,9 +34,7 @@
       <span class="legend-cell level-3"></span>
       <span>多</span>
     </div>
-    <p v-if="!loadError && streak === 0 && !today.newWords && !today.reviewCount && !today.minutesActive" class="empty-hint">
-      还没有学习记录——去词汇中心标记几个单词为"认识"、或做一次听写，这里就会开始有数据了
-    </p>
+    <p v-if="!loadError && streak === 0 && !today.newWords && !today.reviewCount && !today.minutesActive" class="empty-hint">暂无</p>
   </div>
 </template>
 
@@ -74,7 +72,7 @@ onMounted(load)
 
 <style scoped>
 .streak-card {
-  border: 1px solid #eee;
+  border: 1px solid var(--c-line);
   border-radius: 12px;
   padding: 16px 18px;
 }
@@ -94,13 +92,13 @@ onMounted(load)
   border-radius: 10px;
   padding: 8px 16px;
 }
-.streak-num { font-size: 24px; font-weight: 700; color: #8a6d2f; }
-.streak-label { font-size: 12.5px; color: #8a6d2f; }
+.streak-num { font-size: 24px; font-weight: 700; color: var(--c-warn); }
+.streak-label { font-size: 12.5px; color: var(--c-warn); }
 
 .today-stats { display: flex; gap: 20px; flex-wrap: wrap; }
 .ts-item { text-align: center; }
-.ts-item b { display: block; font-size: 18px; color: #1a1a1a; }
-.ts-item span { font-size: 11.5px; color: #999; }
+.ts-item b { display: block; font-size: 18px; color: var(--c-text); }
+.ts-item span { font-size: 11.5px; color: var(--c-text-2); }
 
 .heatmap { display: flex; gap: 3px; overflow-x: auto; }
 .heatmap-col { display: flex; flex-direction: column; gap: 3px; }
@@ -119,13 +117,12 @@ onMounted(load)
   align-items: center;
   gap: 4px;
   margin-top: 8px;
-  color: #999;
+  color: var(--c-text-2);
   font-size: 11px;
 }
 .legend-cell { width: 11px; height: 11px; border-radius: 2px; background: #ebedf0; }
 .legend-cell.level-1 { background: #c6e48b; }
 .legend-cell.level-2 { background: #7bc96f; }
 .legend-cell.level-3 { background: #339a4a; }
-.empty-hint { margin-top: 12px; color: #999; font-size: 12.5px; }
-.load-error { margin-top: 8px; color: #b05a4a; font-size: 12.5px; }
+.load-error { margin-top: 8px; color: var(--c-danger); font-size: 12.5px; }
 </style>

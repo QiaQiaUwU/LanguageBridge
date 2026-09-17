@@ -113,7 +113,7 @@ const visibleSources = computed(() => {
   gap: 5px 10px;
   align-items: baseline;
   font-size: 12px;
-  color: var(--r-ink2, #666);
+  color: var(--c-text-2);
 }
 .legend-group { display: contents; }
 .legend-items { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; }

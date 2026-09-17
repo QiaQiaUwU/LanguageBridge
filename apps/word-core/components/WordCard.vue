@@ -96,7 +96,7 @@ function mark(s: WordStatus) {
 <style lang="scss" scoped>
 .word-card {
   position: relative;
-  background: #fff;
+  background: var(--c-surface);
   border: 1px solid #ececec;
   border-radius: 12px;
   padding: 13px 15px 10px;
@@ -130,7 +130,7 @@ function mark(s: WordStatus) {
 .w-text {
   font-size: 19px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--c-text);
   letter-spacing: 0.2px;
   flex: 0 0 auto;
   max-width: 100%;
@@ -141,7 +141,7 @@ function mark(s: WordStatus) {
 
 .w-phonetic {
   font-size: 13px;
-  color: #666;
+  color: var(--c-text-2);
   font-family: 'Segoe UI', Arial, sans-serif;
   flex: 0 1 auto;
   min-width: 0;
@@ -151,20 +151,20 @@ function mark(s: WordStatus) {
 .icon-btn {
   border: none;
   background: none;
-  color: #444;
+  color: var(--c-text);
   cursor: pointer;
   padding: 2px;
   line-height: 0;
   align-self: center;
   border-radius: 50%;
-  &:hover { color: #000; background: #f0f0f0; }
-  &.small { color: #555; }
-  &.eye { color: #777; margin-left: auto; }
+  &:hover { color: #000; background: var(--c-surface-2); }
+  &.small { color: var(--c-text-2); }
+  &.eye { color: var(--c-text-2); margin-left: auto; }
 }
 
 .w-pos {
   background: #f1f1f1;
-  color: #555;
+  color: var(--c-text-2);
   font-size: 12px;
   padding: 1px 7px;
   border-radius: 5px;
@@ -176,7 +176,7 @@ function mark(s: WordStatus) {
 
 .w-def {
   font-size: 14px;
-  color: #333;
+  color: var(--c-text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -218,8 +218,8 @@ function mark(s: WordStatus) {
   flex-wrap: wrap;
   font-size: 14px;
 
-  .ex-label { color: #333; font-weight: 500; white-space: nowrap; }
-  .ex-en { color: #1a1a1a; }
+  .ex-label { color: var(--c-text); font-weight: 500; white-space: nowrap; }
+  .ex-en { color: var(--c-text); }
 }
 
 .line-zh {
@@ -229,7 +229,7 @@ function mark(s: WordStatus) {
 
   .ex-zh {
     font-size: 13px;
-    color: #555;
+    color: var(--c-text-2);
     &.masked {
       border-bottom: 1.5px solid #aaa;
       min-width: 96px;
@@ -261,12 +261,12 @@ function mark(s: WordStatus) {
   white-space: nowrap;
   cursor: pointer;
   background: #2b2b2b;
-  color: #fff;
+  color: var(--c-text-on-accent);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  &:hover { background: color-mix(in srgb, var(--r-accent, #8a4b3a) 82%, #000); }
+  &:hover { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
   &.on.known { background: #7d9b4e; }
   &.on.fuzzy { background: #c8973a; }
-  &.on.unknown { background: #b05a4a; }
+  &.on.unknown { background: var(--c-danger); }
 }
 
 .mode-list {

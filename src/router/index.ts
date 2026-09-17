@@ -93,6 +93,18 @@ const routes = [
     meta: { title: '听写训练' }
   },
   {
+    path: '/dictation/article/:id',
+    name: 'SentenceDictation',
+    component: () => import('../../apps/reading-assistant/SentenceDictation.vue'),
+    meta: { title: '逐句听写' }
+  },
+  {
+    path: '/dictation/record/:rid',
+    name: 'DictationRecord',
+    component: () => import('../../apps/reading-assistant/SentenceDictation.vue'),
+    meta: { title: '听写记录' }
+  },
+  {
     path: '/reading',
     name: 'Reading',
     component: () => import('../../apps/reading-assistant/ReadingAssistant.vue'),
