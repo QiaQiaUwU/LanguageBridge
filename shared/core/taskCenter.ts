@@ -64,7 +64,13 @@ export function finishTask(id: string, detail = '已完成') {
   t.cancel = undefined
 }
 
-/** 任务失败。同样留在列表里，把原因写清楚 */
+/**
+ * 任务失败。留在列表里写清原因，但**过一会自己消失**。
+ *
+ * 批量对轴一失败就是几十条，逐条点掉太折磨人。
+ * 给 30 秒看清楚，然后自动收走；期间点掉也行。
+ */
+const AUTO_DISMISS_MS = 30_000
 export function failTask(id: string, reason: string) {
   const t = tasks.find(x => x.id === id)
   if (!t) return
@@ -72,6 +78,11 @@ export function failTask(id: string, reason: string) {
   t.detail = reason
   t.endedAt = Date.now()
   t.cancel = undefined
+  setTimeout(() => {
+    const now = tasks.find(x => x.id === id)
+    // 这个 id 可能已经被重新跑起来了，只收走还停在失败状态的那条
+    if (now && now.status === 'error' && now.endedAt === t.endedAt) dismissTask(id)
+  }, AUTO_DISMISS_MS)
 }
 
 /** 用户点掉某一条（确认看到了） */

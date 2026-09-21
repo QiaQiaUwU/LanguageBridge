@@ -3,7 +3,7 @@
     <div class="scope-dialog">
       <h3>{{ title || '选择学习范围' }}</h3>
       <button class="scope-btn primary" @click="$emit('choose', 'page')">仅学习当前页</button>
-      <button v-if="page > 1" class="scope-btn" @click="$emit('choose', 'pageAfter')">从当前页学到最后</button>
+      <button v-if="(page ?? 0) > 1" class="scope-btn" @click="$emit('choose', 'pageAfter')">从当前页学到最后</button>
       <button class="scope-btn" @click="$emit('choose', 'all')">学习当前筛选的全部（{{ total }} 词）</button>
       <div class="scope-footer">
         <button class="cancel-btn" @click="$emit('cancel')">取消</button>

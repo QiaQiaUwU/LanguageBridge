@@ -136,7 +136,8 @@ router.beforeEach((to, from, next) => {
 
   // 已经在学习页里（比如刷新）就别把人踢走，那样更莫名其妙
   if (from.path === '/study') return next(false)
-  next(from.path && from.path !== '/' ? false : '/home')
+  if (from.path && from.path !== '/') return next(false)
+  next('/home')
 })
 
 export default router

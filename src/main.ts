@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import { installStorageGuards } from '@/shared/core/safeStorage'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
@@ -7,6 +8,9 @@ import 'remixicon/fonts/remixicon.css'
 import './styles/tokens.css'
 import './styles/ui.css'
 import { installUi } from './components/ui'
+
+// 写 localStorage 失败（隐私模式、配额满）不再把流程打断
+installStorageGuards()
 
 const app = createApp(App)
 

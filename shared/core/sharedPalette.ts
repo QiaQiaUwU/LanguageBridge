@@ -1,3 +1,4 @@
+import { readJson } from '@/shared/core/safeStorage'
 /**
  * 共用色卡。
  *
@@ -97,7 +98,7 @@ const BUILTIN_SETS: PaletteSet[] = [
 export function listPaletteSets(): PaletteSet[] {
   let mine: PaletteSet[] = []
   try {
-    const raw = JSON.parse(localStorage.getItem(SETS_KEY) || '[]')
+    const raw = readJson(SETS_KEY, [] as any)
     if (Array.isArray(raw)) {
       mine = raw.filter(x => x && typeof x.name === 'string' && Array.isArray(x.colors))
     }
@@ -111,7 +112,7 @@ export function savePaletteSet(name: string, colors: string[]): void {
   if (!clean) return
   if (BUILTIN_SETS.some(b => b.name === clean)) return   // 别占内置的名字
   try {
-    const raw = JSON.parse(localStorage.getItem(SETS_KEY) || '[]')
+    const raw = readJson(SETS_KEY, [] as any)
     const mine: PaletteSet[] = Array.isArray(raw) ? raw : []
     const i = mine.findIndex(x => x.name === clean)
     const item = { name: clean, colors: [...colors] }
@@ -123,7 +124,7 @@ export function savePaletteSet(name: string, colors: string[]): void {
 
 export function deletePaletteSet(name: string): void {
   try {
-    const raw = JSON.parse(localStorage.getItem(SETS_KEY) || '[]')
+    const raw = readJson(SETS_KEY, [] as any)
     const mine: PaletteSet[] = Array.isArray(raw) ? raw : []
     localStorage.setItem(SETS_KEY, JSON.stringify(mine.filter(x => x.name !== name)))
   } catch { /* 忽略 */ }

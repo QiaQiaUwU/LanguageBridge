@@ -113,6 +113,13 @@
               >
                 <span v-if="dim === 'exam'" class="dot" :style="{ background: dotColor(v.name) }"></span>
                 {{ v.name }}<span class="val-count">{{ v.count }}</span>
+                <!-- 词根：直接看以这个词根为中心的笔记 -->
+                <i
+                  v-if="dim === 'morpheme'"
+                  class="ri-sticky-note-line val-note"
+                  title="笔记"
+                  @click.stop="openRootNote(v.name)"
+                ></i>
               </button>
               <button v-if="dimValues.length > DIM_PREVIEW" class="val-chip ghost" @click="expandDim = !expandDim">
                 {{ expandDim ? '收起' : '… 更多 ' + (dimValues.length - DIM_PREVIEW) }}
@@ -244,6 +251,7 @@
           :loading="loadingGraph"
           :root-path="topicScope && !centerWord ? topicPath.map(x => x.label) : []"
           @select="onSelect"
+          @recenter="focusOn"
           @stats="drawn = $event"
           @drill="onGraphDrill"
           @crumb="onCrumb"
@@ -268,6 +276,7 @@
           @close="closeDetail"
           @search="onSelect"
           @filter-family="focusOn"
+          @open-morpheme="openRootNote"
         />
         <FamilyNotePanel
           v-else
@@ -279,6 +288,8 @@
           :preset="noteTarget?.preset"
           :preset-layout="noteTarget?.layout"
           :groups="noteTarget?.groups"
+          :root-query="noteTarget?.rootQuery"
+          :depth="expandDepth"
           @pick="pickFromNote"
         />
       </aside>
@@ -298,6 +309,7 @@ import FamilyNotePanel from './components/FamilyNotePanel.vue'
 import { getIndex, topicTree, expandTopic } from '@/shared/core/familyNoteService'
 import { getStudyRecord } from '@/shared/core/studyRecords'
 import type { FamilyNote, TopicTreeNode } from '@/shared/core/wordFamily'
+import { realMorphemes, canonicalMorpheme, rootAliasState } from '@/shared/core/wordFamily'
 import { useRoute } from 'vue-router'
 import { RELATION_WEIGHTS, type RelationType } from '@/apps/word-core/components/graphColors'
 import {
@@ -343,7 +355,7 @@ function startPanelResize(e: PointerEvent) {
 /* ---------- 词汇笔记 ---------- */
 const route = useRoute()
 const detailTab = ref<'detail' | 'note'>('detail')
-const noteTarget = ref<{ members?: string[]; title?: string; preset?: FamilyNote; layout?: 'list' | 'radial'; groups?: { label: string; words: string[] }[] } | null>(null)
+const noteTarget = ref<{ members?: string[]; title?: string; preset?: FamilyNote; layout?: 'list' | 'radial'; groups?: { label: string; words: string[] }[]; rootQuery?: string } | null>(null)
 /**
  * 详情和笔记并存：
  *   在星图或搜索里选词 → 看这个词的详情（例句、辨析都在），「笔记」页签是这个词的词族笔记；
@@ -496,6 +508,39 @@ async function openTopicNote(n: TopicTreeNode) {
   detailWord.value = null
   detailTab.value = 'note'
 }
+/**
+ * 以词根为中心的笔记。
+ *
+ * `buildRootNote` 一直在 wordFamily 里，但界面上没有任何入口调用它，
+ * 所以这种笔记实际上看不到了。词根维度的每一项挂一个入口。
+ */
+/** 从别的页面带 ?morpheme=xxx 进来：直接打开这个词素的笔记 */
+onMounted(() => {
+  const q = String(route.query.morpheme || '').trim()
+  if (q) {
+    dim.value = 'morpheme'
+    openRootNote(q)
+  }
+})
+
+function openRootNote(form: string) {
+  noteTarget.value = { rootQuery: form, title: form }
+  detailWord.value = null
+  detailTab.value = 'note'
+  /**
+   * 中间的星系跟着一起换成这批词。
+   * 只开笔记不动图，右边在讲这个词根，中间还停在上一批词上，对不上。
+   */
+  const members = wordStore.words
+    .filter(w => matchOne(w, 'morpheme', form))
+    .slice(0, MANUAL_MAX)
+    .map(w => w.word.toLowerCase())
+  if (members.length) {
+    centerWord.value = null
+    manualText.value = members.join(' ')
+  }
+}
+
 /** 从 L1 到这个节点的标签路径 */
 function pathOf(n: TopicTreeNode): string[] {
   const walk = (list: TopicTreeNode[], trail: string[]): string[] | null => {
@@ -600,12 +645,9 @@ function collectDim(key: DimKey): DimValue[] {
     } else if (key === 'topic') {
       for (const t of topicsOf(w)) count.set(t, (count.get(t) || 0) + 1)
     } else {
-      const m = w.morphemes
-      if (!m) continue
-      for (const part of [m.prefix, m.root, m.suffix]) {
-        if (!part?.form) continue
-        count.set(part.form, (count.get(part.form) || 0) + 1)
-        if (part.meaning && !meaning.has(part.form)) meaning.set(part.form, part.meaning)
+      for (const { key: k, meaning: mean } of morphParts(w)) {
+        count.set(k, (count.get(k) || 0) + 1)
+        if (mean && !meaning.has(k)) meaning.set(k, mean)
       }
     }
   }
@@ -649,12 +691,29 @@ function pickDim(k: DimKey) {
 function clearFilter(k: DimKey) { sel.value[k] = '' }
 function clearAllFilters() { sel.value = { exam: '', topic: '', morpheme: '' } }
 
+/**
+ * 词的词素，词根按归一键算。
+ * 词根梳理合并过的 spec / spect / spic 在列表里是同一项，释义用梳理后统一的那个。
+ */
+function morphParts(w: WordItem): { key: string; meaning: string }[] {
+  const m = realMorphemes(w)
+  if (!m) return []
+  const out: { key: string; meaning: string }[] = []
+  if (m.prefix?.form) out.push({ key: m.prefix.form, meaning: m.prefix.meaning || '' })
+  if (m.root?.form) {
+    const k = canonicalMorpheme(m.root.form, m.root.meaning, 'root') || m.root.form
+    out.push({ key: k, meaning: rootAliasState().meaning.get(k) || m.root.meaning || '' })
+  }
+  if (m.suffix?.form) out.push({ key: m.suffix.form, meaning: m.suffix.meaning || '' })
+  return out
+}
+
 function matchOne(w: WordItem, key: DimKey, v: string): boolean {
   if (!v) return true
   if (key === 'exam') return !!w.tags?.includes(v)
   if (key === 'topic') return topicsOf(w).includes(v)
-  const m = w.morphemes
-  return !!m && [m.prefix?.form, m.root?.form, m.suffix?.form].includes(v)
+  const keys = morphParts(w).map(p => p.key)
+  return keys.includes(v) || keys.includes(canonicalMorpheme(v, '', 'root'))
 }
 
 const scopedWords = computed<WordItem[]>(() => {
@@ -695,7 +754,7 @@ function matchWord(w: WordItem, q: string): boolean {
     return true
   }
 
-  const m = w.morphemes
+  const m = realMorphemes(w)
   if (m) {
     for (const part of [m.prefix, m.root, m.suffix]) {
       if (part?.form && part.form.toLowerCase().includes(q)) return true
@@ -738,7 +797,8 @@ function showAllHits() {
   const hits = searchHits.value
   if (!hits.length) return
   centerWord.value = null
-  manualWords.value = hits.slice(0, MANUAL_MAX).map(w => w.word.toLowerCase())
+  // manualWords 是 manualText 的 computed，直接赋值赋不进去（功能等于没生效），要写回源头
+  manualText.value = hits.slice(0, MANUAL_MAX).map(w => w.word.toLowerCase()).join(' ')
   searchFocus.value = false
   paramTick.value++
 }
@@ -914,7 +974,7 @@ function describeClusters(words: WordItem[], clusterOf: Map<string, string>): Re
     for (const w of members) { const k = morphemeKeyOf(w); if (k) roots.set(k, (roots.get(k) || 0) + 1) }
     const topRoot = [...roots.entries()].sort((a, b) => b[1] - a[1])[0]
     if (topRoot && topRoot[1] * 2 > members.length) {
-      const m = members.find(w => morphemeKeyOf(w) === topRoot[0])?.morphemes
+      const m = realMorphemes(members.find(w => morphemeKeyOf(w) === topRoot[0]))
       const mean = m?.root?.meaning || m?.prefix?.meaning || m?.suffix?.meaning
       parts.push(`词根 ${topRoot[0]}${mean ? ' · ' + mean : ''}`)
     }
@@ -1025,8 +1085,13 @@ const nodes = computed<GraphNode[]>(() => {
       definitionZh: w.meanings?.[0]?.chinese,
       sources: sourcesOf(w),
       clusterOf: owner && owner !== w.word ? owner : undefined,
-      cloud: cloudOf.value.get(w.word),
-      superCloud: superOf.value.get(w.word),
+      /**
+       * 关系网（看某个词的扩散）里这两个字段原来是空的，聚团力就不生效，
+       * 所有词自由散开。用「话题 / 词根」兜底：同话题的聚在一块，
+       * 话题里再按词根分小团，排布跟左边那两棵树对得上。
+       */
+      cloud: cloudOf.value.get(w.word) || morphemeKeyOf(w) || w.topics?.[0] || '',
+      superCloud: superOf.value.get(w.word) || w.topics?.[0] || '未分类',
       isCenter: !!centerWord.value && w.word === centerWord.value.word
     }
     if (colorBy.value === 'mastery') {
@@ -1304,6 +1369,10 @@ watch(
 .val-chip.on { border-color: var(--c-accent); background: var(--c-surface-2); }
 .val-chip.ghost { color: var(--c-accent); border-style: dashed; }
 .val-chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.val-note {
+  margin-left: 5px; opacity: .55;
+  &:hover { opacity: 1; }
+}
 .val-count { font-size: 11px; color: var(--c-text-2); }
 .slider { width: 100%; margin-bottom: 10px; }
 .dark-btn {

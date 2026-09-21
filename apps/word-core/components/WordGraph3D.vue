@@ -95,11 +95,18 @@ const emit = defineEmits<{
   (e: 'stats', s: { nodes: number; links: number }): void
   /** 点了外层路径的第 i 级（-1 表示「全部」） */
   (e: 'crumb', i: number): void
+  /** 双击某个词：以它为中心重新铺关系网 */
+  (e: 'recenter', word: string): void
 }>()
 
 const themeStore = useThemeStore()
 const containerEl = ref<HTMLDivElement | null>(null)
-let graph: ForceGraph3DInstance | null = null
+/**
+ * 3d-force-graph 的类型定义没带 scene / camera / renderer / graph2ScreenCoords /
+ * nodeResolution 这些运行时确实存在的方法，标成 ForceGraph3DInstance 会有十来条类型报错。
+ */
+let graph: (ForceGraph3DInstance & Record<string, any>) | null = null
+let lastNodeClick = { word: '', at: 0 }
 
 interface PerfSettings {
   nodeRelSize: number
@@ -999,6 +1006,17 @@ function applyConfig() {
     .enableNavigationControls(true)
     .onNodeClick((node: any) => {
       if (drillInto(node) !== false) return
+      /**
+       * 双击换核心词：以它为中心重新铺关系网。
+       * 库本身没有 onNodeDblClick，自己按两次点击的间隔判。
+       */
+      const now = Date.now()
+      if (lastNodeClick.word === node.word && now - lastNodeClick.at < 350) {
+        lastNodeClick = { word: '', at: 0 }
+        emit('recenter', node.word)
+        return
+      }
+      lastNodeClick = { word: node.word, at: now }
       if (props.clickMode !== 'none') emit('select', node.word)
       if (graph && node.x !== undefined) {
         const distance = 100

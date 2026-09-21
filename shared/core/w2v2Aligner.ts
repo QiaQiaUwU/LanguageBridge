@@ -85,6 +85,23 @@ export const MODEL_SOURCES = [
 
 export const DEFAULT_MODEL_URL = MODEL_SOURCES[0]
 
+/**
+ * 本机 public/models/ 里放好的模型，优先用。
+ *
+ * 以前要手动 localStorage.setItem("lb-w2v2-model-url", …) 才会用本地那份，
+ * 结果放了也等于没放，每次都去连不通的 huggingface。
+ */
+async function localModelUrls(): Promise<string[]> {
+  try {
+    const res = await fetch('/api/local-models')
+    if (!res.ok) return []
+    const list = await res.json()
+    return Array.isArray(list) ? list.filter(u => typeof u === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 const CACHE_NAME = 'lb-w2v2-model'
 
 /** 先查缓存，没有再下载并存起来。带进度回调。 */
@@ -165,7 +182,7 @@ export async function loadAligner(src: ModelSource, onProgress?: (msg: string, r
     // @vite-ignore + 变量路径：onnxruntime-web 没装时，构建不会因为这行失败，
     // 只在真正点「强制对齐」的时候才报错。
     const ort = await loadOrt()
-    const urls = src.url ? [src.url] : MODEL_SOURCES
+    const urls = src.url ? [src.url] : [...(await localModelUrls()), ...MODEL_SOURCES]
     let bytes: ArrayBuffer | null = null
     const errs: string[] = []
     for (const u of urls) {
@@ -179,8 +196,7 @@ export async function loadAligner(src: ModelSource, onProgress?: (msg: string, r
     if (!bytes) {
       throw new Error(
         '所有模型源都下不动：\n' + errs.join('\n') +
-        '\n如果是网络到 huggingface.co 不通，可以自己下好 onnx 文件放到 public/models/，' +
-        '再执行 localStorage.setItem("lb-w2v2-model-url", "/models/文件名.onnx")'
+        '\n网络到 huggingface.co 不通的话，把 onnx 文件放进 public/models/，重启后自动就用它'
       )
     }
     onProgress?.('初始化模型…')

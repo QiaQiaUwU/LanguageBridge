@@ -17,16 +17,31 @@ const BACKEND_BASE = ''
 const TIMEOUT_MS = 2500
 const BULK_TIMEOUT_MS = 120_000
 
+/**
+ * 最近一次请求失败的原因。
+ *
+ * 原来这里把状态码和异常一起吞了，界面只能说"有 N 次同步没成功"，
+ * 到底是服务没起来、超时，还是某个接口 500，谁也不知道。
+ */
+let lastFailure = ''
+export function beLastFailure(): string { return lastFailure }
+
 async function beFetch<T>(path: string, options?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(`${BACKEND_BASE}${path}`, { ...options, signal: controller.signal })
-    if (!res.ok) return null
+    if (!res.ok) {
+      lastFailure = `${path} 返回 ${res.status}`
+      return null
+    }
     const text = await res.text()
     return text ? (JSON.parse(text) as T) : (null as T)
-  } catch {
-    return null // fetch 本身失败（连不上/超时/CORS），当"这次没同步上"处理，不是错误
+  } catch (e) {
+    // fetch 本身失败（连不上/超时/CORS），当"这次没同步上"处理，不是错误
+    const name = e instanceof Error ? e.name : ''
+    lastFailure = name === 'AbortError' ? `${path} 超时（${timeoutMs / 1000}s）` : `${path} 连不上服务`
+    return null
   } finally {
     clearTimeout(timer)
   }
@@ -241,6 +256,17 @@ export async function beSaveWord(word: WordItem): Promise<boolean> {
 
 export async function beDeleteWord(id: string): Promise<boolean> {
   const r = await beFetch(`/api/words/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return r !== null
+}
+
+/** 批量删：整理重复一次几千条，逐条 DELETE 服务端要重写几千遍词库文件 */
+export async function beDeleteWords(ids: string[]): Promise<boolean> {
+  if (!ids.length) return true
+  const r = await beFetch('/api/words/bulk-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ids)
+  }, 120_000)
   return r !== null
 }
 

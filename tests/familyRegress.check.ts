@@ -2,7 +2,7 @@
  * 分类/派生回归：这些是 2026-09 抽检「环境」「社会生活」时发现的真实误判。
  * node --experimental-strip-types tests/familyRegress.check.ts
  */
-import { buildIndex, derivationBase, senseTerms } from '../shared/core/wordFamily.ts'
+import { buildIndex, expandWord, derivationBase, senseTerms } from '../shared/core/wordFamily.ts'
 
 const W = (word: string, zh: string, pos = 'n', family: string[] = []) =>
   ({ id: word, word, meanings: [{ partOfSpeech: pos, chinese: zh }], word_family: family }) as any
@@ -37,6 +37,22 @@ expect('closure ← close（补 e）', baseOf('closure'), 'close')
 expect('happiness ← happy', baseOf('happiness'), 'happy')
 expect('creation ← create', baseOf('creation'), 'create')
 expect('government ← govern', baseOf('government'), 'govern')
+
+/* 同义、反义要跟释义对得上：抽检「环境」「社会生活」时出现的错例 */
+const lib2 = [
+  W('barren', '贫瘠的，不毛的', 'adj'), W('childless', '无子女的', 'adj'), W('arid', '干旱的，贫瘠的', 'adj'),
+  W('prince', '王子', 'n'), W('toad', '蟾蜍', 'n'), W('princess', '公主', 'n'),
+  W('brook', '小溪，小河', 'n'), W('tolerate', '容忍，忍受', 'v'), W('stream', '溪流，小河', 'n')
+]
+lib2[0].synonyms = [{ word: 'childless' }, { word: 'arid' }]
+lib2[3].antonyms = ['toad']
+lib2[6].synonyms = [{ word: 'tolerate' }, { word: 'stream' }]
+const idx2 = buildIndex(lib2)
+const linksOf = (w: string) =>
+  (expandWord(idx2, w)?.links || []).map(l => `${l.kind}:${l.word}`)
+expect('barren 只留贫瘠这一义的同义词', linksOf('barren'), ['syn:arid'])
+expect('prince 不连 toad', linksOf('prince'), [])
+expect('brook 只留小河这一义', linksOf('brook'), ['syn:stream'])
 
 const st = (zh: string) => senseTerms(W('x', zh))
 expect('矿化作用不被截断', st('矿化作用'), ['矿化作用'])

@@ -1,5 +1,6 @@
 import type { WordItem } from '@/shared/types/WordItem'
 import { askAi } from './aiClient'
+import { realMorphemes } from './wordFamily'
 
 export { EXAM_TAGS } from './examTags'
 import { EXAM_TAGS, canonicalExamTags } from './examTags'
@@ -26,7 +27,8 @@ export function missingOf(w: WordItem): {
 } {
   return {
     topics: !w.topics?.length,
-    morphemes: !(w.morphemes?.root?.form || w.morphemes?.prefix?.form || w.morphemes?.suffix?.form),
+    // 只有一个没释义的 root 的是 TypeWords 导入留下的占位（领头词，不是词根），算缺
+    morphemes: !realMorphemes(w),
     family: !w.word_family?.length,
     tags: !w.tags?.length,
     /**

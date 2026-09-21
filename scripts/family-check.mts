@@ -10,7 +10,7 @@
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import {
   buildIndex, buildRootNote, buildSynonymNote, buildTopicNote, buildDecomposeNote, buildTopicTree,
-  parseResemble, parseWordRoots, MORPHEME_VARIANTS, type FamilyNote, type TreeNode, type TopicTreeNode
+  parseResemble, parseWordRoots, MORPHEME_VARIANTS, realMorphemes, isPlaceholderMorphemes, type FamilyNote, type TreeNode, type TopicTreeNode
 } from '../shared/core/wordFamily.ts'
 
 const port = existsSync('port.txt') ? readFileSync('port.txt', 'utf8').trim() : '58712'
@@ -64,7 +64,7 @@ if (args.includes('--coverage') || !args.length) {
   const pct = (n: number) => `${((n / words.length) * 100).toFixed(1)}%`
   const c = (f: (w: any) => boolean) => pct(words.filter(f).length)
   console.log('\n数据覆盖率（笔记质量主要取决于这几项）')
-  console.log(`  有词素字段     ${c(w => !!(w.morphemes?.root || w.morphemes?.prefix))}`)
+  console.log(`  有词素字段     ${c(w => !!realMorphemes(w))}`)
   console.log(`  有同义词       ${c(w => (w.synonyms?.length || 0) > 0)}`)
   console.log(`  有反义词       ${c(w => (w.antonyms?.length || 0) > 0)}`)
   console.log(`  有 word_family ${c(w => (w.word_family?.length || 0) > 0)}`)
@@ -74,6 +74,61 @@ if (args.includes('--coverage') || !args.length) {
   console.log(`  词素键 ${idx.morph.size} 个，其中成员 ≥3 的 ${[...idx.morph.values()].filter(v => v.length >= 3).length} 个`)
   const multi = [...idx.morph.keys()].filter(k => k.includes('(') && !(k in MORPHEME_VARIANTS))
   if (multi.length) console.log(`  同形异义拆开的词素：${multi.slice(0, 20).join('、')}`)
+  rootReport(words)
+}
+
+/**
+ * 词根树为什么建不好：「有词根词缀」只说明字段不空，不说明能不能把词串起来。
+ * 这里把能串起来的和串不起来的分开数，并各举几个例子。
+ */
+function rootReport(words: any[]) {
+  const singles = words.filter((w: any) => !/\s/.test(w.word || ''))
+  const n = singles.length || 1
+  const pct = (k: number) => `${k}（${((k / n) * 100).toFixed(1)}%）`
+  const cleanF = (f: string) => String(f || '').toLowerCase().replace(/[^a-z]/g, '')
+  const eg = (arr: any[], f: (w: any) => string) => arr.slice(0, 8).map(f).join('  ')
+
+  const placeholder = singles.filter(w => isPlaceholderMorphemes(w.morphemes))
+  const real = singles.filter(w => realMorphemes(w))
+  const withRoot = real.filter(w => realMorphemes(w)!.root?.form)
+  const noRoot = real.filter(w => !realMorphemes(w)!.root?.form)
+  const selfRoot = withRoot.filter(w => cleanF(realMorphemes(w)!.root!.form) === cleanF(w.word))
+  const noMeaning = withRoot.filter(w => !String(realMorphemes(w)!.root!.meaning || '').trim())
+
+  // 同一个词根键下有几个词
+  const idx = buildIndex(words)
+  const rootGroups = [...idx.morph.entries()]
+    .map(([k, list]) => [k, list.filter(e => e.role === 'root')] as const)
+    .filter(([, list]) => list.length)
+  const grouped = new Set<string>()
+  let lonely = 0
+  for (const [, list] of rootGroups) {
+    if (list.length >= 2) list.forEach(e => grouped.add(e.word.toLowerCase()))
+    else lonely++
+  }
+  // 写法很像、却分成了两个键的词根（spect / spec、duc / duct）
+  const keys = rootGroups.map(([k]) => k).filter(k => /^[a-z]+$/.test(k) && k.length >= 3)
+  const near: string[] = []
+  const keySet = new Set(keys)
+  for (const k of keys) {
+    for (const cut of [1, 2]) {
+      const shorter = k.slice(0, -cut)
+      if (shorter.length >= 3 && keySet.has(shorter)) near.push(`${shorter}/${k}`)
+    }
+    if (near.length >= 12) break
+  }
+
+  console.log('\n词根树体检（只算单词，不算短语）')
+  console.log(`  有真实词根词缀 ${pct(real.length)}　其中有词根 ${pct(withRoot.length)}`)
+  console.log(`  只有前缀/后缀、没有词根 ${pct(noRoot.length)}　例：${eg(noRoot, w => w.word)}`)
+  console.log(`  词根就是这个词本身 ${pct(selfRoot.length)}　例：${eg(selfRoot, w => w.word)}`)
+  console.log(`  词根没有释义 ${pct(noMeaning.length)}　例：${eg(noMeaning, w => `${w.word}=${realMorphemes(w)!.root!.form}`)}`)
+  console.log(`  TypeWords 占位（领头词冒充词根） ${pct(placeholder.length)}`)
+  console.log(`  词根键 ${rootGroups.length} 个，只有 1 个词的 ${lonely} 个`)
+  console.log(`  能跟别的词串进同一词根的 ${pct(grouped.size)}`)
+  if (near.length) console.log(`  写法相近却没合并的词根：${near.join('  ')}`)
+  const top = rootGroups.sort((a, b) => b[1].length - a[1].length).slice(0, 12)
+  console.log(`  最大的词根：${top.map(([k, l]) => `${k}(${l.length})`).join(' ')}`)
 }
 
 const ti = args.indexOf('--topic')

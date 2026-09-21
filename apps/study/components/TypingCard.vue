@@ -836,7 +836,8 @@ function onKeydown(e: KeyboardEvent) {
   if (step.kind === 'wrong') {
     playError()
     emit('wrong')
-    if (settings.wordSound && props.type !== 'dictation') {
+    // 'dictation' 不在 PracticeType 里，这个条件一直成立；听写模式本来就不该自动读出答案
+    if (settings.wordSound && props.type !== 'listen') {
       playWord(props.word.word, settings.soundType || 'us', settings.wordSoundSpeed)
     }
     waitClear = true

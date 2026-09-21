@@ -37,7 +37,7 @@
       <span class="header-article-title">{{ readingArticleTitle }}</span>
       <!-- 笔记面板在右边，入口就放右边。原来按钮在最左、面板在最右，
            点一个东西结果对面弹出来，方向对不上。 -->
-      <FoldToggle class="header-article-toggle" side="right" :folded="!readingSidePanelOpen" @update:folded="v => readingSidePanelOpen = !v" />
+      <FoldToggle class="header-article-toggle" side="right" :folded="!readingSidePanelOpen" @update:folded="(v: boolean) => readingSidePanelOpen = !v" />
     </div>
 
     <div v-if="storagePersisted === false && !storagePersistDismissed" class="storage-warning">
@@ -81,6 +81,7 @@
 
 <script setup lang="ts">
 import { onSyncStatus } from '@/shared/core/syncStatus'
+import { beLastFailure } from '@/shared/core/backendClient'
 
 import { ref, onMounted, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -181,7 +182,8 @@ const stopSync = onSyncStatus(s => {
      * 某一个接口超时或报错（批量写入慢、某个路由不存在）。
      * 光看这句话没人知道该查什么，只能干着急。
      */
-    const detail = s.lastError ? `（最近一次：${s.lastError}）` : ''
+    const why = beLastFailure()
+    const detail = s.lastError ? `（最近一次：${s.lastError}${why ? ' · ' + why : ''}）` : ''
     syncWarn.value =
       `有 ${s.failed} 次数据同步没成功${detail}，这些改动暂时只在浏览器本地。` +
       '本机服务没起来的话，双击「启动LanguageBridge.bat」；不需要磁盘备份就点掉，不再提醒。'

@@ -274,6 +274,7 @@
       @memorize="onMemorize"
       @search="onSearchRelatedWord"
       @filter-family="onFilterFamily"
+      @open-morpheme="onOpenMorpheme"
     />
 
     <button v-if="!universeOpen" class="universe-tab" @click="universeOpen = true">
@@ -312,8 +313,11 @@
 </template>
 
 <script setup lang="ts">
+import { realMorphemes } from '@/shared/core/wordFamily'
+import { useReaderStore } from '@/apps/reading-assistant/stores/readerStore'
+import { relocateReadingVocab } from '@/apps/reading-assistant/readingVocab'
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import type { GraphNode, GraphLink } from './components/WordGraph3D.vue'
 const WordGraph3D = defineAsyncComponent(() => import('./components/WordGraph3D.vue'))
 import GraphLegend from './components/GraphLegend.vue'
@@ -338,6 +342,7 @@ import { SUPPORTED_IMPORT_EXTS } from '@/shared/core/fileExtract'
 import type { WordItem, WordStatus } from '@/shared/types/WordItem'
 
 const router = useRouter()
+const route = useRoute()
 const wordStore = useWordStore()
 
 const currentGroupId = ref('all')
@@ -487,6 +492,21 @@ function selectBook(bookId: string) {
   currentPage.value = 1
 }
 
+/**
+ * 从主页点某个词表进来（/words?book=xxx）：直接选中那个词表，
+ * 词库条滚到它那里。原来这个参数没人读，进来永远是「全部单词」。
+ */
+function openBookFromRoute() {
+  const id = String(route.query.book || '')
+  if (!id || !wordStore.groups.some(g => g.id === id)) return
+  selectBook(id)
+  nextTick(() => {
+    document.querySelector('.library-card.on:not(:first-child)')
+      ?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })
+  })
+}
+watch(() => route.query.book, openBookFromRoute)
+
 const showImport = ref(false)
 
 async function doDeleteGroup(g: { id: string; name: string }) {
@@ -594,7 +614,7 @@ function collectDim(key: DimKey): DimValue[] {
     } else if (key === 'topic') {
       for (const t of w.topics || []) count.set(t, (count.get(t) || 0) + 1)
     } else {
-      const m = w.morphemes
+      const m = realMorphemes(w)
       if (!m) continue
       // 只取这个维度对应的那一类词素
       const part = key === 'prefix' ? m.prefix : key === 'suffix' ? m.suffix : m.root
@@ -651,7 +671,17 @@ const activeFilters = computed(() =>
     .map(k => ({ key: k, label: DIM_LABEL[k], value: dimSel.value[k] }))
 )
 function clearFilter(k: DimKey) { dimSel.value[k] = ''; currentPage.value = 1 }
-function clearAllFilters() { dimSel.value = { exam: '', topic: '', morpheme: '' }; currentPage.value = 1 }
+// 原来写的是 morpheme，键名根本不存在，词根 / 前缀 / 后缀三个筛选清不掉
+/** 点拆词里的词根：去词汇宇宙看这个词素的笔记 */
+function onOpenMorpheme(form: string) {
+  selectedWord.value = null
+  router.push({ path: '/universe', query: { morpheme: form } })
+}
+
+function clearAllFilters() {
+  dimSel.value = { exam: '', topic: '', root: '', prefix: '', suffix: '' }
+  currentPage.value = 1
+}
 
 function setDimValue(v: string) {
   activeDimValue.value = v
@@ -796,7 +826,7 @@ function matchOne(w: WordItem, key: DimKey, v: string): boolean {
   if (key === 'exam') return !!w.tags?.includes(v)
   if (key === 'topic') return !!w.topics?.includes(v)
   // 拆分之后各查各的：选了前缀 re- 就只看前缀，不会因为后缀同名也命中
-  const m = w.morphemes
+  const m = realMorphemes(w)
   if (!m) return false
   const part = key === 'prefix' ? m.prefix : key === 'suffix' ? m.suffix : m.root
   return part?.form === v
@@ -865,7 +895,7 @@ const filteredWords = computed<WordItem[]>(() => {
         return true
       }
       if (w.meanings?.some(m => m.chinese?.includes(q))) return true
-      const mo = w.morphemes
+      const mo = realMorphemes(w)
       if (mo) {
         for (const part of [mo.prefix, mo.root, mo.suffix]) {
           if (part?.form && part.form.toLowerCase().includes(q)) return true
@@ -1168,6 +1198,12 @@ function onDrop(e: DragEvent) {
 
 onMounted(async () => {
   await wordStore.loadWords()
+  // 阅读生词词表：书里章节的并进书、换过文件夹的挂到新文件夹下。不等它，不挡页面加载
+  openBookFromRoute()
+  const reader = useReaderStore()
+  reader.loadArticles()
+    .then(() => relocateReadingVocab(wordStore, reader))
+    .catch(e => console.warn('[生词词表] 整理失败：', e))
   await loadFsrsData()
   await loadMasteredWords()
   masteredSet.value = getMasteredSet()

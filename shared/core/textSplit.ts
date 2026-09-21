@@ -12,11 +12,49 @@ function isEnglishLine(line: string): boolean {
   return cjk === 0 && letters >= 2
 }
 
+const ABBR = /(?:^|\s)(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|approx|No|Fig|Vol|U\.S|U\.K|[A-Z])$/
+
+/**
+ * 英文分句。
+ *
+ * 原来是一条正则 `[^.!?]+[.!?]+(\s|$)`：句号后面必须紧跟空格才算句末，
+ * 于是 `process.’ They` 这种引号收尾的句子，右引号被甩到下一句开头，一个标点单独占一行；
+ * `Mr. Smith`、`e.g. this` 又会被从中间切开。现在逐字扫：
+ * 句末标点后面的右引号、右括号归前一句；缩写和单个大写字母（J. K.）后面不断；
+ * 下一个词不是大写 / 引号 / 数字开头的也不断。
+ */
 export function splitEnglishSentences(text: string): string[] {
   const cleaned = text.replace(/\s+/g, ' ').trim()
   if (!cleaned) return []
-  const parts = cleaned.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [cleaned]
-  return parts.map(s => s.trim()).filter(Boolean)
+  const out: string[] = []
+  let start = 0
+  let i = 0
+  while (i < cleaned.length) {
+    const c = cleaned[i]
+    if (c !== '.' && c !== '!' && c !== '?') { i++; continue }
+    let j = i
+    while (j < cleaned.length && /[.!?]/.test(cleaned[j])) j++
+    while (j < cleaned.length && /["'’”)\]]/.test(cleaned[j])) j++
+    const atEnd = j >= cleaned.length
+    const nextCh = cleaned[j + 1] || ''
+    const spaced = cleaned[j] === ' '
+    const before = cleaned.slice(start, i)
+    const isAbbr = c === '.' && j === i + 1 && ABBR.test(before)
+    const nextStarts = /[A-Z0-9"'‘“(\[]/.test(nextCh)
+    if (atEnd || (spaced && nextStarts && !isAbbr)) {
+      out.push(cleaned.slice(start, j).trim())
+      start = j
+    }
+    i = j
+  }
+  if (start < cleaned.length) out.push(cleaned.slice(start).trim())
+  // 只剩标点的碎片并回前一句
+  const merged: string[] = []
+  for (const p of out.filter(Boolean)) {
+    if (!/[A-Za-z0-9]/.test(p) && merged.length) merged[merged.length - 1] += p
+    else merged.push(p)
+  }
+  return merged
 }
 
 function stripMdInline(line: string): string {

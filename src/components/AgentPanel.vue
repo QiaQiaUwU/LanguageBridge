@@ -125,27 +125,42 @@
     </div>
 
     <template v-else>
-      <div class="quick-actions">
+      <button class="quick-toggle" @click="quickOpen = !quickOpen">
+        <span>快捷操作</span>
+        <i :class="quickOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'"></i>
+      </button>
+
+      <div v-if="quickOpen" class="quick-actions">
+        <!-- 一栏排开，不再分「快捷操作 / 文章操作」两块 -->
         <button class="chip" @click="doStats">学习统计</button>
         <button class="chip" :disabled="!wordStore.words.length" @click="doRandomWord">随机复习一词</button>
-        <button class="chip" :disabled="!aiReady" @click="doAdvice">AI学习建议</button>
-        <button class="chip" @click="prefill('请帮我讲解一下这个单词：')">单词讲解</button>
-        <button class="chip" @click="prefill('请用这个单词造3个例句：')">造句练习</button>
-        <button class="chip" @click="prefill('请把下面这段话翻译成英文：')">翻译</button>
+        <button class="chip" :disabled="!aiReady" @click="doAdvice">学习建议</button>
+        <button class="chip" @click="prefill('讲讲这个单词：')">单词讲解</button>
+        <button
+          v-for="a in articleQuickActions"
+          :key="a.key"
+          class="chip"
+          :disabled="a.disabled"
+          :title="a.title || ''"
+          @click="a.run()"
+        >{{ a.label }}</button>
+        <!-- 下面这些对应 lb-action 里真能执行的操作 -->
+        <button class="chip" @click="prefill(`按这份材料重排《${currentArticleTitle}》的原文和译文：\n`)">重排译文</button>
+        <button class="chip" @click="prefill(`把《${currentArticleTitle}》第 1 句的译文改成：`)">改译文</button>
+        <button class="chip" @click="prefill(`给《${currentArticleTitle}》里划线的词补释义`)">补这篇的词</button>
+        <button class="chip" @click="prefill(`把《${currentArticleTitle}》第 1 句在「」这里拆成两句`)">拆句</button>
+        <button class="chip" @click="prefill(`把《${currentArticleTitle}》第 1 句起的 2 句合成一句`)">合并句</button>
+        <button class="chip" @click="prefill('新建一个词表，叫：')">新建词表</button>
+        <button class="chip" @click="prefill('把这些词加到词表「」里：')">加词进词表</button>
+        <button class="chip" @click="prefill('把词表「」改名为：')">词表改名</button>
+        <button class="chip" @click="prefill('查一下这几个词在我词库里的情况：')">查词库</button>
+        <button class="chip" @click="prefill('每 30 分钟提醒我：')">定时提醒</button>
+        <button class="chip" @click="prefill('现在有哪些提醒')">查看提醒</button>
+        <button class="chip" @click="prefill('取消提醒：')">取消提醒</button>
+        <button class="chip" @click="prefill('跳到词汇宇宙')">跳转页面</button>
       </div>
 
-      <div v-if="articleQuickActions.length" class="article-actions">
-        <h4 class="section-title">文章操作</h4>
-        <div class="article-actions-row">
-          <button
-            v-for="a in articleQuickActions"
-            :key="a.key"
-            class="chip"
-            :disabled="a.disabled"
-            :title="a.title || ''"
-            @click="a.run()"
-          >{{ a.label }}</button>
-        </div>
+      <div v-if="quickOpen && lastQuickActionResult" class="article-actions">
         <p v-if="lastQuickActionResult" class="action-result" :class="lastQuickActionResult.ok ? 'ok' : 'bad'">
           {{ lastQuickActionResult.message }}
           <span class="action-result-close" @click="lastQuickActionResult = null">×</span>
@@ -154,7 +169,8 @@
 
       <div class="panel-chat" ref="chatLogEl">
         <div v-for="(m, i) in agentChat.chatHistory" :key="i" v-show="!m.hidden" class="msg" :class="m.role">
-          <p v-if="m.content">{{ m.content }}</p>
+          <!-- 模型回答里有 **加粗**、`代码`、- 列表，直接当纯文本显示满屏都是星号 -->
+          <p v-if="m.content" class="msg-text" v-html="renderRich(m.content)"></p>
           <!-- 助手回答里嵌的交互部件，随时可以点开 -->
           <AgentWidget v-for="(w, k) in (m.widgets || [])" :key="k" :spec="w" />
 
@@ -178,13 +194,16 @@
         <CloseButton class="context-chip-close" title="不带这段上下文" @click="clearAgentSelectionContext" />
       </div>
       <div class="panel-input">
-        <input
+        <textarea
           ref="inputEl"
           v-model="input"
+          class="panel-textarea"
+          rows="1"
           placeholder="提问"
           :disabled="!aiReady"
-          @keyup.enter="send"
-        />
+          @input="autoGrow"
+          @keydown.enter.exact.prevent="send"
+        ></textarea>
         <button class="send-btn" :disabled="!input.trim() || agentChat.chatSending || !aiReady" @click="send">
           <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
         </button>
@@ -194,7 +213,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import { agentPanelOpen, agentPanelPrefillText, agentSelectionContext, clearAgentSelectionContext, articleQuickActions, lastQuickActionResult, agentButtonRect } from '@/shared/core/agentPanelState'
 import { useAgentChatStore } from '@/shared/stores/agentChatStore'
 import { useRouter } from 'vue-router'
@@ -276,7 +295,41 @@ async function doCheckin(h: Habit) {
 }
 
 const input = ref('')
-const inputEl = ref<HTMLInputElement | null>(null)
+const inputEl = ref<HTMLTextAreaElement | null>(null)
+
+/* 快捷操作默认收起，占地方而且不是每次都要用 */
+const QUICK_KEY = 'lb-agent-quick-open'
+const quickOpen = ref(false)
+try { quickOpen.value = localStorage.getItem(QUICK_KEY) === '1' } catch { /* 读不到就默认收起 */ }
+watch(quickOpen, v => { try { localStorage.setItem(QUICK_KEY, v ? '1' : '0') } catch { /* 忽略 */ } })
+
+/** 当前这篇文章的标题，给几个改文章的快捷提示词用 */
+const currentArticleTitle = computed(() => readerStore.current?.title || '文章标题')
+
+/** 输入框跟着内容长高，最多到 7 行 */
+function autoGrow() {
+  const el = inputEl.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+}
+watch(input, () => nextTick(autoGrow))
+onMounted(autoGrow)
+
+/**
+ * 模型的回答里有 Markdown（**加粗**、`代码`、- 列表）。
+ * 直接当纯文本渲染满屏都是星号，所以这里只把最常见的几种转成标签，
+ * 其余一律先转义，不给注入的机会。
+ */
+function renderRich(text: string): string {
+  const esc = (s: string) => s
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return esc(text)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|\n)\s*[-*]\s+/g, '$1· ')
+    .replace(/\n/g, '<br>')
+}
 const chatLogEl = ref<HTMLElement | null>(null)
 
 function scrollDown() {
@@ -737,7 +790,32 @@ function onDragEnd(e: PointerEvent) {
 .dark-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 82%, #000); }
 .dark-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+.quick-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 7px 12px; border: none; background: none;
+  font: inherit; font-size: 12px; color: var(--c-text-2); cursor: pointer;
+  border-bottom: 1px solid var(--c-line);
+  &:hover { background: var(--c-surface-2); }
+}
 .quick-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--c-line); flex-shrink: 0; }
+.panel-textarea {
+  flex: 1; resize: none; overflow-y: auto; max-height: 160px;
+  padding: 8px 12px;
+  border: 1px solid var(--c-line); border-radius: 18px;
+  background: var(--c-surface);
+  font: inherit; line-height: 1.5; color: var(--c-text);
+  transition: border-color var(--dur-base), box-shadow var(--dur-base);
+  &::placeholder { color: var(--c-text-3); }
+  &:focus {
+    outline: none;
+    border-color: var(--c-accent);
+    box-shadow: 0 0 0 3px var(--c-accent-soft);
+  }
+}
+.msg-text code {
+  padding: 1px 4px; border-radius: 4px;
+  background: var(--c-surface-2); font-size: .92em;
+}
 .article-actions { padding: 10px 12px; border-bottom: 1px solid var(--c-line); flex-shrink: 0; }
 .article-actions-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .action-result {

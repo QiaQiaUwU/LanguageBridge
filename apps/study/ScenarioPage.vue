@@ -209,6 +209,7 @@
 </template>
 
 <script setup lang="ts">
+import { readJson } from '@/shared/core/safeStorage'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWordStore } from '@/shared/stores/wordStore'
@@ -405,7 +406,7 @@ const parts = computed<Record<PartKey, boolean>>(() => {
     writing: true, sentence: false, podcast: false
   }
   try {
-    return { ...def, ...JSON.parse(localStorage.getItem('lb-scene-parts') || '{}') }
+    return { ...def, ...readJson('lb-scene-parts', {} as any) }
   } catch {
     return def
   }
@@ -426,7 +427,7 @@ const sentParts = ref<{ text: string; issue?: any }[]>([])
  */
 const errorTally = ref<Record<string, number>>(
   (() => {
-    try { return JSON.parse(localStorage.getItem('lb-grammar-tally') || '{}') } catch { return {} }
+    try { return readJson('lb-grammar-tally', {} as any) } catch { return {} }
   })()
 )
 const sentStats = computed(() =>

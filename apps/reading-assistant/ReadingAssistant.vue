@@ -1,5 +1,5 @@
 <template>
-  <div class="reading" :class="{ 'shadow-on': viewSubMode === 'shadow' && alignedCount > 0 }">
+  <div class="reading" :class="{ 'shadow-on': viewSubMode === 'shadow' && alignedCount > 0, 'exam-wide': !!article?.exam }">
     <div class="reader-wrap">
 
     <div v-if="article" class="article-view">
@@ -38,7 +38,7 @@
         <!-- 右边缘拖动改宽度：章节标题长的时候把框往右拖 -->
         <div v-if="!bookSideFolded" class="bs-resizer" @pointerdown="startBookResize"></div>
         <div class="bs-head">
-          <span v-if="!bookSideFolded" class="bs-title">{{ currentBook.name }}</span>
+          <span v-if="!bookSideFolded" class="bs-title">{{ currentBook?.title }}</span>
           <FoldToggle v-model:folded="bookSideFolded" class="bs-fold" :label="`目录 ${bookChapters.length}`" />
         </div>
 
@@ -228,6 +228,9 @@
         :src="audioObjectUrl"
         controls
         class="align-audio-player"
+        @timeupdate="onAudioTimeUpdate"
+        @loadedmetadata="onAudioTimeUpdate"
+        @durationchange="onAudioTimeUpdate"
       ></audio>
 
       <!-- 复述面板已并入跟读模式：关掉英文即为复述 -->
@@ -278,6 +281,29 @@
             </span>
           </div>
 
+          <!-- 有原声就按时间拖（能拖到一句话中间），没有就按句号拖 -->
+          <input
+            v-if="audioDuration > 0"
+            class="sb-seek"
+            type="range"
+            min="0"
+            :max="audioDuration"
+            step="0.1"
+            :value="audioTime"
+            title="播放进度"
+            @input="seekAudio(($event.target as HTMLInputElement).valueAsNumber)"
+          />
+          <input
+            v-else-if="article.sentences.length > 1"
+            class="sb-seek"
+            type="range"
+            min="1"
+            :max="article.sentences.length"
+            :value="(playingIdx >= 0 ? playingIdx : 0) + 1"
+            title="播放进度"
+            @input="jumpShadow(($event.target as HTMLInputElement).valueAsNumber - 1)"
+          />
+
           <!-- 一行一条拉条：左边选调什么，右边一条通用的拉条。
                三条并排太占地方，竖排又太高，这样最省空间。 -->
           <div class="sb-slider">
@@ -316,6 +342,7 @@
               :sent-idx="i"
               :marks="marksForSentence(i)"
               @token-click="onTokenClick"
+              @token-hover="onTokenHover"
             />
             <button class="icon-btn" @click.stop="playSentenceSmart(i)">
               <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
@@ -475,37 +502,70 @@
         </div>
       </div>
 
-      <div v-else class="content" :class="`layout-${layout}`" @mouseup="onTextSelected">
+      <div v-else class="exam-wrap" :class="{ on: !!article.exam, writing: article.exam?.type === 'writing' }">
+      <div class="content" :class="`layout-${layout}`" @mouseup="onTextSelected">
+        <h3 v-if="article.exam?.passageTitle" class="exam-passage-title">{{ article.exam.passageTitle }}</h3>
         <template v-if="layout === 'sentence'">
           <div class="sentence-row" :id="`sent-${i}`" v-for="(s, i) in article.sentences" :key="i">
-            <div v-if="showEnglish" class="en"><ClickableSentence :text="s.en" :sent-idx="i" :marks="marksForSentence(i)" @token-click="onTokenClick" /></div>
+            <div v-if="showEnglish" class="en"><ClickableSentence :text="s.en" :sent-idx="i" :marks="marksForSentence(i)" @token-click="onTokenClick"
+              @token-hover="onTokenHover" /></div>
             <p v-if="showChinese" class="zh zh-clickable" @click="onZhSentenceClick(i, $event)"><ZhMarked :text="s.zh || '（暂无译文）'" :marks="zhMarksForSentence(i)" /></p>
           </div>
         </template>
         <template v-else-if="layout === 'split'">
           <div class="split-row" v-for="(s, i) in article.sentences" :key="i">
-            <div v-if="showEnglish" class="en"><ClickableSentence :text="s.en" :sent-idx="i" :marks="marksForSentence(i)" @token-click="onTokenClick" /></div>
+            <div v-if="showEnglish" class="en"><ClickableSentence :text="s.en" :sent-idx="i" :marks="marksForSentence(i)" @token-click="onTokenClick"
+              @token-hover="onTokenHover" /></div>
             <p v-else class="en-placeholder"></p>
             <p v-if="showChinese" class="zh zh-clickable" @click="onZhSentenceClick(i, $event)"><ZhMarked :text="s.zh || '（暂无译文）'" :marks="zhMarksForSentence(i)" /></p>
             <p v-else class="zh-placeholder"></p>
           </div>
         </template>
         <template v-else>
-          <div v-if="showEnglish" class="block en">
-            <ClickableSentence
-              v-for="(s, i) in article.sentences"
-              :key="i"
-              :text="s.en + ' '"
-              :sent-idx="i"
-              :marks="marksForSentence(i)"
-              @token-click="onTokenClick"
-              tag="span"
-            />
-          </div>
-          <div v-if="showChinese" class="block zh">
-            <span v-for="(s, i) in article.sentences" :key="'bz' + i" class="zh-clickable" @click="onZhSentenceClick(i, $event)"><ZhMarked :text="s.zh" :marks="zhMarksForSentence(i)" /></span>
+          <!-- 按自然段排：一段英文、紧跟这段的中文，不再整篇堆成两大块 -->
+          <div v-for="(para, pi) in paragraphs" :key="'p' + pi" class="para-pair">
+            <div v-if="showEnglish" class="block en">
+              <ClickableSentence
+                v-for="i in para"
+                :key="i"
+                :text="article.sentences[i].en + ' '"
+                :sent-idx="i"
+                :marks="marksForSentence(i)"
+                @token-click="onTokenClick"
+                @token-hover="onTokenHover"
+                tag="span"
+              />
+            </div>
+            <div v-if="showChinese" class="block zh">
+              <span v-for="i in para" :key="'bz' + i" class="zh-clickable" @click="onZhSentenceClick(i, $event)"><ZhMarked :text="article.sentences[i].zh" :marks="zhMarksForSentence(i)" /></span>
+            </div>
           </div>
         </template>
+      </div>
+      <ExamPanel
+        v-if="article.exam"
+        class="exam-side"
+        :exam="article.exam"
+        :answers="article.examAnswers || {}"
+        :show-zh="showChinese"
+        :essay="article.examEssay || ''"
+        :translating="examTranslating"
+        :ai-ready="aiReady"
+        @update="saveExamAnswers"
+        @images="saveExamImages"
+        @essay="saveExamEssay"
+        @translate="translateExam(true)"
+      >
+        <template #t="{ text }">
+          <ClickableSentence
+            tag="span"
+            :text="text"
+            :marks="examMarksFor(text)"
+            @token-click="onExamTokenClick"
+            @token-hover="onTokenHover"
+          />
+        </template>
+      </ExamPanel>
       </div>
 
       <div v-if="markMenu" class="mark-menu" :style="{ left: markMenu.x + 'px', top: markMenu.y + 'px' }">
@@ -590,7 +650,7 @@
 
             <div class="vocab-target-row">
               <button class="vocab-target-toggle" @click="showVocabTargetPicker = !showVocabTargetPicker">
-                生词收进：<strong>{{ effectiveVocabBookName }}</strong>{{ article.vocabBookId ? '（手动指定）' : '（跟文件夹同名，自动）' }} · 改
+                生词收进：<strong>{{ effectiveVocabBookName }}</strong>{{ vocabTarget && !vocabTarget.autoRoot ? '（手动指定）' : vocabTarget?.viaBook ? '（跟书走，自动）' : '（跟文件夹同名，自动）' }} · 改
               </button>
             </div>
             <div v-if="showVocabTargetPicker" class="vocab-target-picker">
@@ -630,7 +690,7 @@
         <button class="ghost-btn" :disabled="restoringFromBackend" :title="restoreMessage" @click="doRestoreFromBackend">
           {{ restoringFromBackend ? '恢复中…' : '从后端恢复' }}
         </button>
-        <button class="dark-btn" title="新建 / 导入文章" @click="showImportPanel = !showImportPanel">{{ showImportPanel ? '收起' : '＋' }}</button>
+        <button class="dark-btn" title="新建 / 导入文章" @click="showImportPanel = true">＋</button>
       </div>
       <p v-if="restoreMessage" class="restore-message">{{ restoreMessage }}</p>
       <div v-if="showNewGroupInput" class="new-group-row">
@@ -638,7 +698,12 @@
         <button class="ghost-btn small" @click="doCreateGroup">创建</button>
       </div>
 
-      <div v-if="showImportPanel" class="import-panel">
+      <div v-if="showImportPanel" class="append-mask" @click.self="showImportPanel = false">
+      <div class="import-panel">
+        <div class="ip-head">
+          <span class="append-title">新建 / 导入文章</span>
+          <CloseButton title="关闭" @click="showImportPanel = false" />
+        </div>
         <textarea
           v-model="pasteText"
           class="paste-area"
@@ -672,6 +737,7 @@
         </div>
         <p v-if="urlError" class="err-text">{{ urlError }}</p>
         <button class="start-btn" :disabled="!pasteText.trim()" @click="createFromPaste">导入</button>
+      </div>
       </div>
 
       <div v-if="selectedIds.size" class="batch-bar">
@@ -711,7 +777,7 @@
           }"
           :style="cleaningOneId === a.id ? { '--clean-pct': cleanPct }
             : taskFor(a.id) ? { '--clean-pct': pctOf(taskFor(a.id)!.ratio) } : undefined"
-          draggable="true"
+          :draggable="!selectMode"
           @pointerdown="onRowPointerDown(a.id, $event); armDrag(a.id)"
           @pointerup="disarmDrag"
           @pointerleave="disarmDrag"
@@ -797,7 +863,7 @@
           class="new-book-box"
           :class="{ hot: newBookHot }"
           title="新建书"
-          @click="createEmptyBook"
+          @click="createEmptyBook()"
           @dragover.prevent="newBookHot = true"
           @dragleave="newBookHot = false"
           @drop.prevent="onDropToNewBook"
@@ -849,22 +915,40 @@
       </div>
     </div>
 
+    <!-- 桌面版里 window.prompt 不可用，改名、新建书都要用这个输入框 -->
+    <div v-if="askState" class="append-mask" @click.self="askCancel">
+      <div class="append-box ask-box">
+        <div class="append-title">{{ askState.title }}</div>
+        <input ref="askInputRef" v-model="askState.value" class="title-input" @keyup.enter="askOk" @keyup.esc="askCancel" />
+        <div class="ip-head">
+          <button class="ghost-btn small" @click="askCancel">取消</button>
+          <button class="dark-btn small" @click="askOk">确定</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showAppendPicker" class="append-mask" @click.self="showAppendPicker = false">
       <div class="append-box">
-        <div class="append-title">选一篇加到《{{ article?.title }}》末尾</div>
+        <div class="ip-head">
+          <span class="append-title">加到《{{ article?.title }}》末尾</span>
+          <button class="ghost-btn small" @click="toggleAppendAll">
+            {{ appendPicked.size === appendCandidates.length && appendCandidates.length ? '取消全选' : '全选' }}
+          </button>
+        </div>
         <div class="append-list">
-          <button
-            v-for="a in appendCandidates"
-            :key="a.id"
-            class="append-item"
-            @click="appendChapter(a)"
-          >
+          <label v-for="a in appendCandidates" :key="a.id" class="append-item">
+            <input type="checkbox" :checked="appendPicked.has(a.id)" @change="toggleAppendPick(a.id)" />
             <span class="ai-title">{{ a.title }}</span>
             <span class="ai-meta">{{ a.sentences.length }} 句</span>
-          </button>
-          <p v-if="!appendCandidates.length" class="append-empty">暂无</p>
+          </label>
+          <EmptyState v-if="!appendCandidates.length" />
         </div>
-        <button class="ghost-btn small" @click="showAppendPicker = false">取消</button>
+        <div class="ip-head">
+          <button class="ghost-btn small" @click="showAppendPicker = false">取消</button>
+          <button class="dark-btn small" :disabled="!appendPicked.size || appending" @click="appendPickedChapters">
+            {{ appending ? '添加中…' : `添加（${appendPicked.size}）` }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -907,14 +991,19 @@
 </template>
 
 <script setup lang="ts">
+import { readJson } from '@/shared/core/safeStorage'
 import { ref, computed, onMounted, onBeforeUnmount, defineComponent, h, watch, nextTick } from 'vue'
 import { useReaderStore } from './stores/readerStore'
+import { vocabTargetOf, ensureVocabTarget, relocateReadingVocab } from './readingVocab'
+import ExamPanel from './components/ExamPanel.vue'
+import { looksLikeExam, parseExamPaper, isUnspokenLine, examTexts } from '@/shared/core/examPaper'
+import { paragraphStartsOf, groupParagraphs } from '@/shared/core/paragraphs'
 import { useWordStore } from '@/shared/stores/wordStore'
 import { playWord, playSentence } from '@/shared/core/audio'
 import { detectBilingual, toEnglishOnlySentences, splitEnglishSentences, isNumberedHeading, isChineseOnly, toChineseOnlySentences, isStructuralLine } from '@/shared/core/textSplit'
 import { askAi, AiError } from '@/shared/core/aiClient'
 import { isAiConfigured } from '@/shared/core/aiSettings'
-import { extractTextFromFile, extractDocxSections, stripHtml, SUPPORTED_ARTICLE_EXTS } from '@/shared/core/fileExtract'
+import { extractTextFromFile, extractImagesFromFile, extractDocxSections, stripHtml, SUPPORTED_ARTICLE_EXTS } from '@/shared/core/fileExtract'
 import { stripTranscriptNoise, aiReorganizeTranscript, aiTranslateLines, aiTranslateToEnglish, aiOutlineChapters, aiFixEnglish, analyzeTranscript } from '@/shared/core/transcriptClean'
 import { similarityScore } from '@/shared/core/textSimilarity'
 import type { Article, ArticleMark, ArticleChapter, ArticleSentence } from '@/shared/types/Article'
@@ -999,7 +1088,7 @@ const ClickableSentence = defineComponent({
     sentIdx: { type: Number, default: -1 },
     marks: { type: Array as () => { start: number; end: number; id: string; color: string }[], default: () => [] }
   },
-  emits: ['token-click'],
+  emits: ['token-click', 'token-hover'],
   setup(props, { emit }) {
     return () => {
       const text = props.text
@@ -1017,7 +1106,13 @@ const ClickableSentence = defineComponent({
           children.push(
             h(
               'span',
-              { class: `reading-mark hl-${m.color}`, onClick: (e: MouseEvent) => emit('token-click', { text: segText, isWord: false, markId: m.id, event: e }) },
+              {
+                class: `reading-mark hl-${m.color}`,
+                onClick: (e: MouseEvent) => emit('token-click', { text: segText, isWord: false, markId: m.id, event: e }),
+                // 划过线的单词悬停也要出释义，跟没划线时一样
+                onMouseenter: (e: MouseEvent) => emit('token-hover', { text: segText, event: e }),
+                onMouseleave: () => emit('token-hover', { text: '', event: null as any })
+              },
               segText
             )
           )
@@ -1194,7 +1289,68 @@ function stripLeadingToc(body: string, allTitles: string[]): string {
   return hits >= 3 ? lines.slice(i).join('\n').trim() : body
 }
 
+/**
+ * 试题：正文照常分句，题目单独存结构。
+ * 不走切章 —— 题号「1」「2」会被当成编号标题切出一串目录。
+ */
+function buildExamArticle(title: string, raw: string, source: string, sourceUrl?: string, groupId?: string): Article | null {
+  const exam = parseExamPaper(raw, title)
+  if (!exam || !exam.passage.trim()) return null
+  const finalTitle = title || exam.title || exam.passageTitle || '未命名试题'
+  const now = new Date().toISOString()
+  return {
+    id: `art-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    title: finalTitle,
+    rawEnglish: raw,
+    sentences: examSentences(exam.passage, finalTitle),
+    source,
+    sourceUrl,
+    notes: '',
+    reciteDraft: '',
+    needsCleanup: false,
+    groupId: groupId || undefined,
+    marks: [],
+    exam,
+    examAnswers: {},
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+/**
+ * 对轴时跳过标了 noAlign 的句子：只把要朗读的句子交给对齐，结果再按原下标放回。
+ * 听力原文里夹的 Part 1、题组标题这些音频里没有，硬塞进去会把后面整段带偏。
+ */
+function alignSkipping(
+  align: (s: string[], w: any[], d?: number, bi?: boolean) => any[],
+  rateOf: (t: any[]) => number,
+  sentences: ArticleSentence[],
+  words: any[],
+  dur: number | undefined
+): { timings: any[]; rate: number } {
+  const keep = sentences.map((_, i) => i).filter(i => !sentences[i].noAlign && sentences[i].en.trim())
+  const got = align(keep.map(i => sentences[i].en), words, dur, looksBilingual(keep.map(i => sentences[i])))
+  const timings: any[] = new Array(sentences.length).fill(undefined)
+  keep.forEach((i, k) => { timings[i] = got[k] })
+  return { timings, rate: rateOf(got) }
+}
+
+/** 试题正文分句：标出自然段，Part 1 这类不朗读的行对轴时跳过 */
+function examSentences(passage: string, title: string): ArticleSentence[] {
+  const sentences = splitToSentences(passage, title).sentences
+  const starts = paragraphStartsOf(sentences, passage)
+  return sentences.map((s, i) => ({
+    ...s,
+    ...(starts.has(i) ? { para: true } : {}),
+    ...(isUnspokenLine(s.en) ? { noAlign: true } : {})
+  }))
+}
+
 function buildArticle(title: string, raw: string, source: string, sourceUrl?: string, groupId?: string): Article {
+  if (looksLikeExam(raw)) {
+    const ex = buildExamArticle(title, raw, source, sourceUrl, groupId)
+    if (ex) return ex
+  }
   const finalTitle = title || '未命名文章'
   const secs = splitMarkdownSections(raw)
   const sentences: ArticleSentence[] = []
@@ -1273,6 +1429,11 @@ async function importFiles(files: File[]) {
       try {
         const text = await extractTextFromFile(file)
         const a = buildArticle(file.name.replace(/\.[^.]+$/, ''), text, 'file', undefined, pasteGroupId.value)
+        // 试题文件里的图（作文图表、听力地图）一并挂到题目栏
+        if (a.exam) {
+          const images = await extractImagesFromFile(file)
+          if (images.length) a.exam = { ...a.exam, images }
+        }
         await readerStore.saveArticle(a)
         ok++
       } catch (err) {
@@ -1402,6 +1563,15 @@ function openArticle(id: string) {
   readerStore.selectArticle(id)
   nextTick(() => {
     const a = article.value
+    /**
+     * 打开的是书本身（它自己没有句子）就转到上次读到的那一章。
+     * 书是个壳子，停在这儿只会看到"共 0 句"和空的章节下拉。
+     * 兜在这里而不是在入口处，是因为搜索、恢复、书签好几个地方都会直接开一个 id。
+     */
+    if (a?.isBook && a.chapterIds?.length) {
+      const i = Math.min(Math.max(0, a.lastLearnIndex || 0), a.chapterIds.length - 1)
+      if (a.chapterIds[i] !== id) { openArticle(a.chapterIds[i]); return }
+    }
     // 进书里的哪一章，就把进度记到书上
     const b = a?.partOfBook ? readerStore.articles.find(x => x.id === a.partOfBook) : null
     if (b) {
@@ -1446,8 +1616,29 @@ const merging = ref(false)
 
 const showGroupManager = ref(false)
 
+/** 代替 window.prompt：桌面版（Electron）里 prompt 直接被禁用，点了没反应 */
+const askState = ref<{ title: string; value: string } | null>(null)
+const askInputRef = ref<HTMLInputElement | null>(null)
+let askResolve: ((v: string | null) => void) | null = null
+function askText(title: string, value = ''): Promise<string | null> {
+  askState.value = { title, value }
+  nextTick(() => askInputRef.value?.select())
+  return new Promise(res => { askResolve = res })
+}
+function askOk() {
+  const v = askState.value?.value ?? ''
+  askState.value = null
+  askResolve?.(v.trim() || null)
+  askResolve = null
+}
+function askCancel() {
+  askState.value = null
+  askResolve?.(null)
+  askResolve = null
+}
+
 async function renameGroupById(id: string, old: string) {
-  const name = prompt('分组新名字', old)
+  const name = await askText('分组新名字', old)
   if (!name || name === old) return
   await readerStore.renameGroup(id, name)
 }
@@ -1796,6 +1987,50 @@ const appendCandidates = computed(() =>
  * 把另一篇文章作为新章节追加到当前这本书末尾。
  * 句子接到后面，chapters 记下新章起始句号 —— 跟合并时同一套结构。
  */
+const appendPicked = ref<Set<string>>(new Set())
+const appending = ref(false)
+function toggleAppendPick(id: string) {
+  const s = new Set(appendPicked.value)
+  s.has(id) ? s.delete(id) : s.add(id)
+  appendPicked.value = s
+}
+function toggleAppendAll() {
+  appendPicked.value = appendPicked.value.size === appendCandidates.value.length
+    ? new Set()
+    : new Set(appendCandidates.value.map(a => a.id))
+}
+watch(showAppendPicker, open => { if (open) appendPicked.value = new Set() })
+
+/**
+ * 一次加多篇：一次算完一次存。
+ * 逐篇 await 会在每次保存后重新读这本书，读到的可能还是上一版，章起始句号就错位了。
+ */
+async function appendPickedChapters() {
+  const book = article.value
+  const picked = appendCandidates.value.filter(a => appendPicked.value.has(a.id) && a.sentences?.length)
+  if (!book || !picked.length) return
+  appending.value = true
+  try {
+    const sentences = [...book.sentences]
+    const chapters = [...(book.chapters || [{ title: book.title, sentenceIndex: 0 }])]
+    for (const a of picked) {
+      chapters.push({ title: a.title, sentenceIndex: sentences.length })
+      sentences.push(...a.sentences.map(x => ({ ...x })))
+    }
+    await readerStore.saveArticle({
+      ...book,
+      sentences,
+      chapters,
+      needsCleanup: sentences.some(x => !x.zh && x.en.trim()),
+      updatedAt: new Date().toISOString()
+    })
+    batchMessage.value = `已加入 ${picked.length} 篇`
+  } finally {
+    appending.value = false
+    showAppendPicker.value = false
+  }
+}
+
 async function appendChapter(src: Article) {
   const book = article.value
   if (!book || !src.sentences?.length) return
@@ -1978,7 +2213,11 @@ function onRowPointerDown(id: string, e: PointerEvent) {
 
   if (selectMode.value) {
     e.preventDefault()
-    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) selectedIds.value = new Set()
+    /**
+     * 原来这里每次按下都清空已选 —— 选好几篇之后再点一篇，
+     * 前面选的全没了。选择模式下就该是勾选：点一下加一个，
+     * 拖过去连着选，要清空有「取消」。
+     */
     beginDrag(id)
     /**
      * 这里原来调了 setPointerCapture。指针捕获会把后续所有 pointermove
@@ -2156,6 +2395,8 @@ async function doBatchMove() {
   if (!batchMoveTarget.value) return
   const target = batchMoveTarget.value === 'none' ? undefined : batchMoveTarget.value
   await readerStore.moveArticlesToGroup([...selectedIds.value], target)
+  // 换了文件夹，生词词表跟着挂过去
+  relocateReadingVocab(wordStore, readerStore).catch(e => console.warn('[生词词表] 整理失败：', e))
   selectedIds.value = new Set()
   batchMoveTarget.value = ''
 }
@@ -2401,12 +2642,14 @@ const newBookHot = ref(false)
  * 书本身就是一条 isBook 的文章记录，没有正文，只按顺序引用章节。
  */
 async function createEmptyBook(title?: string) {
-  const name = (title || prompt('新书名字', '未命名的书') || '').trim()
+  const name = (title || await askText('新书名字', '未命名的书') || '').trim()
   if (!name) return null
   const book: Article = {
     id: 'bk-' + Date.now().toString(36),
     title: name,
     source: 'book',
+    rawEnglish: '',
+    notes: '',
     sentences: [],
     isBook: true,
     chapterIds: [],
@@ -2611,7 +2854,8 @@ async function cleanupOne(a: Article, force = false) {
       batchMessage.value = `英文 ${lastEnOk} 批全部返回「无需修改」，继续补译文…`
     }
 
-    const raw = a.rawEnglish || a.sentences.map(x => x.en).join(' ')
+    // 试题只整理正文，题目不进来
+    const raw = a.exam ? a.exam.passage : (a.rawEnglish || a.sentences.map(x => x.en).join(' '))
 
     /**
      * 先判断这是什么稿子，再决定怎么处理。
@@ -2909,7 +3153,8 @@ async function cleanupOne(a: Article, force = false) {
       await readerStore.saveArticle({
         ...a,
         sentences,
-        chapters: restructured.chapters,
+        // 试题不分章
+        chapters: a.exam ? undefined : restructured.chapters,
         marks: reanchorMarks(a.marks, sentences),
         needsCleanup: false
       })
@@ -3055,7 +3300,7 @@ const needsTranslation = computed(() => article.value?.sentences.some(s => !s.zh
 
 type Layout = 'bilingual' | 'split' | 'sentence'
 const layout = ref<Layout>((localStorage.getItem('lb-reader-layout') as Layout) || 'sentence')
-watch(layout, v => localStorage.setItem('lb-reader-layout', v))
+watch(layout, v => { if (!article.value?.exam) localStorage.setItem('lb-reader-layout', v) })
 const layouts: { label: string; value: Layout }[] = [
   { label: '双语对照', value: 'bilingual' },
   { label: '左右分栏', value: 'split' },
@@ -3342,7 +3587,7 @@ const shadowGapRatio = ref(Number(localStorage.getItem('lb-shadow-gap')) || 0)
 const barPos = ref<{ x: number; y: number } | null>(
   (() => {
     try {
-      const v = JSON.parse(localStorage.getItem('lb-shadow-bar-pos') || '')
+      const v = readJson('lb-shadow-bar-pos', null as any)
       if (typeof v?.x === 'number' && typeof v?.y === 'number') return v
     } catch { /* 没存过就用默认位置 */ }
     return null
@@ -3768,13 +4013,10 @@ async function handleVideoFile(f: File | null | undefined) {
         })
       }
       const { alignSentencesToTranscript, matchRate } = await import('@/shared/core/forcedAlign')
-      const timings = alignSentencesToTranscript(
-        article.value.sentences.map(x => x.en),
-        timedWords,
-        undefined,
-        looksBilingual(article.value.sentences)
+      // 不朗读的行（试题里的 Part 1、题组标题）不参与对轴，其余照常
+      const { timings, rate } = alignSkipping(
+        alignSentencesToTranscript, matchRate, article.value.sentences, timedWords, undefined
       )
-      const rate = matchRate(timings)
       if (rate > 0.2) {
         const sentences = article.value.sentences.map((sent, i) => {
           const t = timings[i]
@@ -3859,13 +4101,10 @@ async function applySubtitleFile(f: File | null | undefined) {
       })
     }
     const { alignSentencesToTranscript, matchRate } = await import('@/shared/core/forcedAlign')
-    const timings = alignSentencesToTranscript(
-      article.value.sentences.map(x => x.en),
-      timedWords,
-      undefined,
-      looksBilingual(article.value.sentences)
+    // 不朗读的行（试题里的 Part 1、题组标题）不参与对轴，其余照常
+    const { timings, rate } = alignSkipping(
+      alignSentencesToTranscript, matchRate, article.value.sentences, timedWords, undefined
     )
-    const rate = matchRate(timings)
     if (rate < 0.15) {
       subMessage.value = `解析到 ${cues.length} 条字幕，但只对上 ${(rate * 100).toFixed(0)}% 的词，确认字幕和文章是同一篇`
       return
@@ -3954,13 +4193,10 @@ watch(
       const { alignSentencesToTranscript, matchRate } = await import('@/shared/core/forcedAlign')
       // 把音频真实时长一并传进去，末尾那段没识别出词的部分才不会被截掉
       const dur = audioEl.value?.duration
-      const timings = alignSentencesToTranscript(
-        target.sentences.map(x => x.en),
-        words,
-        Number.isFinite(dur) ? dur : undefined,
-        looksBilingual(target.sentences)
+      // 不朗读的行（试题里的 Part 1、题组标题）不参与对轴，其余照常
+      const { timings, rate } = alignSkipping(
+        alignSentencesToTranscript, matchRate, target.sentences, words, Number.isFinite(dur) ? dur : undefined
       )
-      const rate = matchRate(timings)
       const sentences = target.sentences.map((sent, i) => {
         const t = timings[i]
         return t ? { ...sent, audioStart: t.start, audioEnd: t.end, audioZhStart: t.zhStart } : sent
@@ -4177,11 +4413,41 @@ async function markLastSentenceEnd() {
 function jumpAudioTo(t: number | undefined) {
   if (audioEl.value && t != null) {
     audioEl.value.currentTime = t
-    audioEl.value.play()
+    safePlay(audioEl.value)
   }
 }
 
 const alignedCount = computed(() => article.value?.sentences.filter(s => s.audioStart != null).length || 0)
+
+/**
+ * play() 被紧接着的 pause() 打断时浏览器会抛 AbortError。
+ * 这个 Promise 没人接就变成「未捕获的 Promise」弹到界面上，
+ * 而且后续播放看起来像是坏掉了。切句、拖进度时非常容易触发，统一吞掉。
+ */
+function safePlay(el: HTMLMediaElement | null | undefined) {
+  el?.play?.().catch(err => {
+    if (err?.name !== 'AbortError' && err?.name !== 'NotAllowedError') console.warn('播放失败：', err)
+  })
+}
+
+/* 进度条：跟着原声的时间走，能拖到一句话中间 */
+const audioTime = ref(0)
+const audioDuration = ref(0)
+function onAudioTimeUpdate() {
+  const el = audioEl.value
+  if (!el) return
+  audioTime.value = el.currentTime
+  if (el.duration && isFinite(el.duration)) audioDuration.value = el.duration
+}
+function seekAudio(t: number) {
+  const el = audioEl.value
+  if (!el) return
+  // 拖进度就别让「这一句放完自动停」的定时器把它掐了
+  if (shadowStopTimer) { clearTimeout(shadowStopTimer); shadowStopTimer = null }
+  el.currentTime = t
+  audioTime.value = t
+  safePlay(el)
+}
 
 let shadowStopTimer: ReturnType<typeof setTimeout> | null = null
 function playSentenceSmart(i: number) {
@@ -4194,7 +4460,7 @@ function playSentenceSmart(i: number) {
   if (s?.audioStart != null && s.audioEnd != null && audioEl.value) {
     if (shadowStopTimer) clearTimeout(shadowStopTimer)
     audioEl.value.currentTime = s.audioStart
-    audioEl.value.play()
+    safePlay(audioEl.value)
     const dur = Math.max(0, (s.audioEnd - s.audioStart) * 1000)
     shadowStopTimer = setTimeout(() => audioEl.value?.pause(), dur)
   } else {
@@ -5166,62 +5432,19 @@ async function translateAll() {
   }
 }
 
+/** 生词收进哪：书里的章节跟着书走（书的文件夹、书名词表），见 readingVocab.ts */
+const vocabTarget = computed(() => (article.value ? vocabTargetOf(article.value, readerStore, wordStore) : null))
 const effectiveVocabBookName = computed(() => {
-  if (!article.value) return ''
-  if (article.value.vocabBookId) {
-    const manual = wordStore.groups.find(g => g.id === article.value!.vocabBookId)
-    if (manual) return manual.name
-  }
-  const artGroup = article.value.groupId ? readerStore.groups.find(g => g.id === article.value!.groupId) : null
-  return artGroup ? artGroup.name : '未分组生词'
+  const t = vocabTarget.value
+  if (!t) return ''
+  return t.viaBook ? `${t.rootName} · ${t.listName}` : t.rootName
 })
 
 const topLevelVocabBooks = computed(() => wordStore.groups.filter(g => g.id.startsWith('book-') && !g.parentId))
 
 async function ensureArticleGroup(): Promise<string | null> {
   if (!article.value) return null
-
-  let rootId: string
-  if (article.value.vocabBookId && wordStore.groups.find(g => g.id === article.value!.vocabBookId)) {
-    rootId = article.value.vocabBookId
-  } else {
-    const artGroup = article.value.groupId ? readerStore.groups.find(g => g.id === article.value!.groupId) : null
-    rootId = artGroup ? `book-notes-for-artgroup-${artGroup.id}` : 'book-notes-ungrouped'
-    const rootName = artGroup ? artGroup.name : '未分组生词'
-    if (!wordStore.groups.find(g => g.id === rootId)) {
-      const now = new Date().toISOString()
-      await wordStore.createGroup({
-        id: rootId,
-        name: rootName,
-        description: artGroup ? `来自文章文件夹「${artGroup.name}」的划线生词` : '没有归到具体文件夹的文章生词',
-        wordIds: [],
-        createdAt: now,
-        updatedAt: now
-      })
-    } else {
-      const g = wordStore.groups.find(g => g.id === rootId)!
-      if (artGroup && g.name !== artGroup.name) await wordStore.updateGroup(rootId, { name: artGroup.name })
-    }
-  }
-
-  const gid = `book-reading-${article.value.id}`
-  if (!wordStore.groups.find(g => g.id === gid)) {
-    const now = new Date().toISOString()
-    await wordStore.createGroup({
-      id: gid,
-      name: article.value.title,
-      description: `来自文章《${article.value.title}》的标注生词`,
-      parentId: rootId,
-      wordIds: [],
-      createdAt: now,
-      updatedAt: now
-    })
-  } else {
-    const g = wordStore.groups.find(g => g.id === gid)!
-    if (g.parentId !== rootId) await wordStore.updateGroup(gid, { parentId: rootId })
-    if (g.name !== article.value.title) await wordStore.updateGroup(gid, { name: article.value.title })
-  }
-  return gid
+  return ensureVocabTarget(vocabTargetOf(article.value, readerStore, wordStore), wordStore)
 }
 
 async function setVocabBookOverride(bookId: string | null) {
@@ -5646,7 +5869,28 @@ function marksForSentence(i: number): { start: number; end: number; id: string; 
     const e = Math.min(m.end, bEnd)
     if (e > s) out.push({ start: s - bStart, end: e - bStart, id: m.id, color: m.color || 'sand' })
   }
-  return out
+
+  /**
+   * 同一个词在别处出现也染上。
+   *
+   * 标记只存一条（笔记里也只出现一次），但正文里另外几处也应该看得出划过线，
+   * 否则同一个词一处有色一处没有，看着像漏标了。这里只影响显示，不写数据。
+   */
+  const taken = out.map(x => [x.start, x.end] as const)
+  for (const m of article.value.marks) {
+    const t = (m.text || '').trim()
+    // 只对单个单词做：整句、词组标记在别处很难说是"同一个东西"
+    if (!t || !/^[A-Za-z][A-Za-z'-]*$/.test(t)) continue
+    const re = new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+    for (let hit = re.exec(text); hit; hit = re.exec(text)) {
+      const s = hit.index
+      const e = s + hit[0].length
+      if (taken.some(([ts, te]) => s < te && e > ts)) continue   // 这一处已经有标记了
+      taken.push([s, e])
+      out.push({ start: s, end: e, id: m.id, color: m.color || 'sand' })
+    }
+  }
+  return out.sort((a, b) => a.start - b.start)
 }
 function zhMarksForSentence(i: number): { id: string; color: string; zhText?: string }[] {
   const bStart = sentenceOffsets.value[i] ?? 0
@@ -5690,6 +5934,137 @@ function migrateMarksToSentenceAnchor() {
   }
 }
 watch(() => article.value?.id, () => { nextTick(migrateMarksToSentenceAnchor) }, { immediate: true })
+
+/**
+ * 以前按普通文章导进来的试题，打开时转成试题：
+ * 正文重新分句，已有的译文按英文原句对回去，划线按原文重新定位，章节目录去掉。
+ */
+async function convertToExamIfNeeded() {
+  const a = article.value
+  if (!a || a.exam || a.isBook || !a.rawEnglish || !looksLikeExam(a.rawEnglish)) return
+  const exam = parseExamPaper(a.rawEnglish, a.title)
+  if (!exam || !exam.passage.trim()) return
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const zhByEn = new Map(a.sentences.filter(s => s.zh).map(s => [norm(s.en), s.zh]))
+  const sentences = examSentences(exam.passage, a.title)
+    .map(s => ({ ...s, zh: s.zh || zhByEn.get(norm(s.en)) || '' }))
+  await readerStore.saveArticle({
+    ...a,
+    sentences,
+    chapters: undefined,
+    marks: reanchorMarks(a.marks, sentences),
+    exam,
+    examAnswers: a.examAnswers || {},
+    needsCleanup: false
+  })
+}
+watch(() => article.value?.id, () => { convertToExamIfNeeded().catch(e => console.warn('[试题] 转换失败：', e)) }, { immediate: true })
+
+async function saveExamAnswers(v: Record<number, string>) {
+  const a = article.value
+  if (!a) return
+  await readerStore.saveArticle({ ...a, examAnswers: v })
+}
+async function saveExamImages(images: string[]) {
+  const a = article.value
+  if (!a?.exam) return
+  await readerStore.saveArticle({ ...a, exam: { ...a.exam, images } })
+}
+let essayTimer: ReturnType<typeof setTimeout> | null = null
+function saveExamEssay(text: string) {
+  // 边写边存，停笔半秒再落盘，别每敲一个字写一次库
+  if (essayTimer) clearTimeout(essayTimer)
+  const id = article.value?.id
+  essayTimer = setTimeout(async () => {
+    const a = readerStore.articles.find(x => x.id === id)
+    if (a) await readerStore.saveArticle({ ...a, examEssay: text })
+  }, 500)
+}
+
+/**
+ * 翻译题目：题干、选项、说明、填空笔记一次送去，按原文存译文。
+ * 打开试题时没译过就自动译一次（一两次请求）；之后缺的点「翻译题目」补。
+ */
+const examTranslating = ref(false)
+const examAutoTried = new Set<string>()
+async function translateExam(force = false) {
+  const a = article.value
+  if (!a?.exam || examTranslating.value || !aiReady.value) return
+  if (!force && examAutoTried.has(a.id)) return
+  examAutoTried.add(a.id)
+  const todo = examTexts(a.exam).filter(t => !a.exam!.zh?.[t])
+  if (!todo.length) return
+  examTranslating.value = true
+  try {
+    const zh: Record<string, string> = { ...(a.exam.zh || {}) }
+    for (let i = 0; i < todo.length; i += 30) {
+      const slice = todo.slice(i, i + 30)
+      const out = await aiTranslateLines(slice)
+      slice.forEach((t, k) => { if (out[k]) zh[t] = out[k] })
+    }
+    const cur = readerStore.articles.find(x => x.id === a.id)
+    if (cur?.exam) await readerStore.saveArticle({ ...cur, exam: { ...cur.exam, zh } })
+  } catch (e) {
+    batchMessage.value = '题目翻译失败：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    examTranslating.value = false
+  }
+}
+watch(() => article.value?.exam && article.value.id, () => { translateExam() })
+
+/**
+ * 题目里的词：划过线的、收进这篇生词表的，在题目里也染上。
+ * 题目文字不属于正文的任何一句，所以标记只用来显示，点了是查词。
+ */
+const examVocabWords = computed(() => {
+  const a = article.value
+  if (!a?.exam) return new Map<string, string>()
+  const out = new Map<string, string>()
+  for (const m of a.marks || []) {
+    const t = (m.text || '').trim().toLowerCase()
+    if (/^[a-z][a-z'-]*$/.test(t)) out.set(t, m.color)
+  }
+  const list = wordStore.groups.find(g => g.id === vocabTarget.value?.listId)
+  if (list) {
+    const ids = new Set(list.wordIds)
+    for (const w of wordStore.words) if (ids.has(w.id) && !out.has(w.word.toLowerCase())) out.set(w.word.toLowerCase(), defaultHl.value)
+  }
+  return out
+})
+function examMarksFor(text: string) {
+  const map = examVocabWords.value
+  if (!map.size) return []
+  const out: { start: number; end: number; id: string; color: string }[] = []
+  const re = /[A-Za-z][A-Za-z'-]*/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    const color = map.get(m[0].toLowerCase())
+    if (color) out.push({ start: m.index, end: m.index + m[0].length, id: 'exam:' + m[0], color })
+  }
+  return out
+}
+function onExamTokenClick(payload: { text: string; isWord: boolean; markId?: string; event: MouseEvent }) {
+  const word = (payload.text || '').trim()
+  const el = payload.event?.target as HTMLElement | null
+  if (!el || !/^[A-Za-z][A-Za-z'-]*$/.test(word)) return
+  setAgentSelectionContext(word)
+  hoverLookup(word, el)
+}
+
+/** 自然段：句子上有 para 标记就用；老文章没有，按原文的段落现算 */
+const paragraphs = computed<number[][]>(() => {
+  const a = article.value
+  if (!a) return []
+  return groupParagraphs(a.sentences, a.exam ? a.exam.passage : a.rawEnglish || '')
+})
+
+/* 试题默认单句对照，离开试题回到原来的版式；试题里切版式不改全局偏好 */
+let layoutBeforeExam: Layout | null = null
+watch(() => article.value?.id, () => {
+  const isExam = !!article.value?.exam
+  if (isExam && layoutBeforeExam == null) { layoutBeforeExam = layout.value; layout.value = 'sentence' }
+  else if (!isExam && layoutBeforeExam != null) { layout.value = layoutBeforeExam; layoutBeforeExam = null }
+}, { immediate: true })
 
 const HL_COLORS = [
   { name: 'sand', hex: '#c9b287', label: '沙' },
@@ -5803,6 +6178,15 @@ function onTextSelected() {
   showMenuForSelection()
 }
 
+/** 划过线的那一段：悬停也查词（单个单词才查，整句标记不弹） */
+function onTokenHover(payload: { text: string; event: MouseEvent | null }) {
+  const t = (payload.text || '').trim()
+  if (!t || !payload.event) { cancelHoverLookup(); return }
+  if (!/^[A-Za-z][A-Za-z'-]*$/.test(t)) return
+  const el = payload.event.currentTarget as HTMLElement | null
+  if (el) hoverLookup(t, el)
+}
+
 function onTokenClick(payload: { text: string; isWord: boolean; markId?: string; event: MouseEvent }) {
   const { markId, event } = payload
   if (markId) {
@@ -5822,6 +6206,15 @@ function onTokenClick(payload: { text: string; isWord: boolean; markId?: string;
     if (hitRect) refineMarkMenu(hitRect, 'edit')
     const hitMarkText = article.value?.marks?.find(m => m.id === markId)?.text
     setAgentSelectionContext(hitMarkText || payload.text)
+    /**
+     * 划过线的单词点下去只出编辑菜单，看不到释义了。
+     * 单个词的标记顺带把查词浮层也打开，跟没划线时一样。
+     */
+    const marked = (hitMarkText || payload.text || '').trim()
+    if (/^[A-Za-z][A-Za-z'-]*$/.test(marked)) {
+      const el = event.target as HTMLElement
+      if (el) hoverLookup(marked, el)
+    }
     return
   }
   const el = event.target as HTMLElement
@@ -5950,16 +6343,23 @@ async function markWordByText(word: string, surface = '') {
 
   let sentIdx = -1
   let localStart = -1
+  let hitLen = 0
   outer:
   for (const re of tries) {
     for (let i = 0; i < a.sentences.length; i++) {
       const hit = re.exec(a.sentences[i].en || '')
-      if (hit) { sentIdx = i; localStart = hit.index; break outer }
+      // 命中的长度要按实际匹配到的词形算：原形 endure 命中 endures 时，
+      // 按原形长度截就会划出半个词（endure|s），标记位置和文字都是错的
+      if (hit) { sentIdx = i; localStart = hit.index; hitLen = hit[0].length; break outer }
     }
   }
-  if (sentIdx < 0) return          // 这篇里真的没有这个词，不硬造标记
+  if (sentIdx < 0) {
+    // 正文里没有、只在题目里出现的词：不造标记，但照样收进这篇的生词表
+    if (a.exam) await autoCollectMarkAsVocab(w)
+    return
+  }
 
-  const shown = a.sentences[sentIdx].en.slice(localStart, localStart + w.length)
+  const shown = a.sentences[sentIdx].en.slice(localStart, localStart + hitLen)
 
   /**
    * 找出这个词对应的中文，存进 zhText。
@@ -5984,6 +6384,15 @@ async function markWordByText(word: string, surface = '') {
     createdAt: new Date().toISOString()
   }
   await readerStore.saveArticle({ ...a, marks: [...(a.marks || []), mark] })
+
+  /**
+   * 划线就当收藏：查词浮层的星标看的是词库里的 status，
+   * 划过线却不改 status 的话，星星是灭的，看着像"划了但没收"。
+   */
+  const hit = wordStore.words.find(x => x.word.toLowerCase() === w.toLowerCase())
+  if (hit && hit.status !== 'unknown') {
+    try { await wordStore.updateWordFields(hit.id, { status: 'unknown' } as any) } catch { /* 不影响划线 */ }
+  }
 
   // 释义从词库里取，跟手动划线拿到的是同一份
   const entry = wordStore.words.find(x => x.word.toLowerCase() === w.toLowerCase())
@@ -6213,6 +6622,8 @@ onMounted(async () => {
   await wordStore.loadWords()
   await readerStore.loadArticles()
   window.addEventListener('keydown', onKeydown)
+  // 旧版按章节开的生词词表、换过文件夹的词表，搬到该在的位置
+  relocateReadingVocab(wordStore, readerStore).catch(e => console.warn('[生词词表] 整理失败：', e))
 })
 onBeforeUnmount(() => {
   // 离开阅读助手时把笔记存一次。光靠输入框的 @blur 不保险：
@@ -6297,20 +6708,7 @@ const articleQuickActionsComputed = computed<ArticleQuickAction[]>(() => {
       run: cleanupTranscript
     })
   }
-  actions.push({
-    key: 'audio-align-manual',
-    label: viewSubMode.value === 'audioAlign' ? '关闭音频对轴工具' : '打开音频对轴工具（手动标时间点）',
-    run: () => { viewSubMode.value = viewSubMode.value === 'audioAlign' ? 'read' : 'audioAlign' }
-  })
-  if (readerStore.backendReachable) {
-    actions.push({
-      key: 'audio-align-mfa',
-      label: mfaAligning.value ? 'MFA自动对齐中…（可能要等一会）' : '用MFA自动对齐音频（后端）',
-      disabled: mfaAligning.value,
-      title: '需要后端装好 MFA/ffmpeg，见 backend/README.md',
-      run: runMfaAutoAlign
-    })
-  }
+  // 音频对轴（手动 / MFA）不放这儿：页面上「音频 / 视频」里本来就有，AI 面板放的是 AI 能做的事
   return actions
 })
 
@@ -6411,7 +6809,9 @@ watch(() => article.value?.id, () => {
 }, { immediate: true })
 
 watch(() => article.value?.sentences.length, () => {
-  if (viewSubMode.value === 'recite' || reciteDrafts.value.length) syncReciteDrafts(article.value || null)
+  // 原来写的是 viewSubMode === 'recite'，但复述是 reciteMode 这个开关，
+  // 这个比较永远为 false，切文章时复述草稿不会同步
+  if (reciteMode.value || reciteDrafts.value.length) syncReciteDrafts(article.value || null)
 })
 
 watch(sidePanelOpen, open => { if (open) syncNotesEditorFromDraft() })
@@ -6422,6 +6822,24 @@ watch(sidePanelOpen, open => { if (open) syncNotesEditorFromDraft() })
  * 放在文件末尾是因为它用到 isBookMode / bookPage / readNotePage，
  * 这些都声明在前面 —— 提前调用会撞上暂时性死区。
  */
+/**
+ * 选中的是书本身（壳子，自己没有句子）就转到上次读到的那一章。
+ *
+ * openArticle 里已经兜过一次，但学习记录、手机端等地方是直接
+ * readerStore.selectArticle(id)，绕过了那里，落地就是「共 0 句」的空页。
+ */
+watch(
+  () => article.value?.id,
+  () => {
+    const a = article.value
+    if (a?.isBook && a.chapterIds?.length) {
+      const i = Math.min(Math.max(0, a.lastLearnIndex || 0), a.chapterIds.length - 1)
+      if (a.chapterIds[i] !== a.id) readerStore.selectArticle(a.chapterIds[i])
+    }
+  },
+  { immediate: true }
+)
+
 watch(
   () => [article.value?.id, isBookMode.value, bookPage.value] as const,
   () => {
@@ -6656,7 +7074,11 @@ watch(
 }
 .a-del { border: none; background: none; color: #ccc; cursor: pointer; font-size: 13px; &:hover { color: #b05a4a; } }
 
+.ip-head { display: flex; align-items: center; justify-content: space-between; }
 .import-panel {
+  width: min(680px, 92vw); max-height: 86vh; overflow: auto;
+  background: var(--c-surface);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
   border: 1px solid #eee; border-radius: 12px; padding: 18px 20px; margin-bottom: 18px;
   h1 { font-size: 24px; color: #1a1a1a; }
   .sub { color: #888; margin: 6px 0 20px; font-size: 14px; }
@@ -7186,6 +7608,7 @@ watch(
 }
 /* 跟读模式下正文留出底栏的高度，最后几行才不会被盖住 */
 .reading.shadow-on .content { padding-bottom: 96px; }
+.sb-seek { width: 100%; accent-color: var(--c-accent); cursor: pointer; }
 .sb-item {
   display: flex; align-items: center; gap: 6px;
   font-size: 13px; color: var(--c-text-2);
@@ -7429,6 +7852,47 @@ watch(
   box-shadow: 0 6px 20px rgba(0,0,0,.18); cursor: pointer; white-space: pre-wrap;
 }
 
+/* 试题用满宽度：两栏并排时 1100 太窄，两边留一大片空白 */
+.reading.exam-wide { max-width: none; padding-left: 16px; padding-right: 16px; }
+.reading.exam-wide .article-view { padding-left: 16px; padding-right: 16px; }
+.para-pair { margin-bottom: 1.2em; }
+.para-pair .block { margin-bottom: 0.4em; }
+/* 试题：左边正文、右边题目，各自滚动，像做题网站那样对照着看 */
+.exam-wrap.on {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 1fr);
+  gap: var(--space-xl);
+  align-items: start;
+}
+.exam-wrap.on > .content,
+.exam-wrap.on > .exam-side {
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  padding-right: var(--space-sm);
+}
+.exam-wrap.on > .exam-side {
+  position: sticky;
+  top: var(--space-md);
+  border-left: 1px solid var(--c-line-soft);
+  padding-left: var(--space-lg);
+}
+.exam-passage-title { text-align: center; margin: 0 0 var(--space-lg); font-size: var(--text-lg); }
+/* 作文：题目（题干、图、自己写）在左，范文在右 */
+.exam-wrap.on.writing { grid-template-columns: minmax(360px, 1fr) minmax(0, 1.1fr); }
+.exam-wrap.on.writing > .exam-side {
+  order: -1;
+  border-left: none;
+  padding-left: 0;
+  border-right: 1px solid var(--c-line-soft);
+  padding-right: var(--space-lg);
+}
+@media (max-width: 900px) {
+  .exam-wrap.on { grid-template-columns: 1fr; }
+  .exam-wrap.on.writing { grid-template-columns: 1fr; }
+  .exam-wrap.on.writing > .exam-side { border-right: none; padding-right: 0; }
+  .exam-wrap.on > .content, .exam-wrap.on > .exam-side { max-height: none; overflow: visible; }
+  .exam-wrap.on > .exam-side { position: static; border-left: none; padding-left: 0; }
+}
 .chapter-toc {
   position: fixed;
   left: calc(var(--lb-nav-w, 178px) + 14px);

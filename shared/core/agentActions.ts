@@ -34,6 +34,12 @@ const NEEDS_CONFIRM = new Set([
   'addWordsToList',
   'setReminder',
   'cancelReminder',
+  'replaceTranslation',
+  'enrichArticleWords',
+  'setSentence',
+  'splitSentence',
+  'mergeSentences',
+  'enrichArticleWords',
   'cleanupArticle'
 ])
 
@@ -53,6 +59,14 @@ export const ACTION_PROMPT = `你可以操作这个软件。需要动手时输�
 - renameWordList  {from, to}            词表改名
 - addWordsToList  {list, words[]}       把词加进指定词表；words 留空表示"我最近查过的词"
 - queryWords      {root?, topic?, level?, limit?}  按词根/话题/掌握度查词，只读不改
+- replaceTranslation {title, text, mode?}  用自己的译文替换文章里 AI 翻的那份。
+                                       text 是整段「英文句紧跟中文句」的双语材料，原样贴进来，不用自己切。
+                                       mode 省略＝只替换对得上的句子；mode:"rebuild"＝整篇按材料重排，
+                                       原文和译文都用材料里的（断句也跟着材料走）。
+- enrichArticleWords {title}           把这篇文章里划过线 / 收藏的词交给 AI 补释义、音标、例句、词根词缀
+- setSentence     {title, index, zh?, en?}  改第 index 句（从 1 开始）的译文或原文
+- splitSentence   {title, index, at}   把第 index 句拆成两句，at 是拆开处的前半段文字（原文里的一小段）
+- mergeSentences  {title, index, count?}  从第 index 句起合并 count 句（默认 2）
 - setReminder     {label, minutes}      定时提醒（复习、喝水、休息）
 - listReminders   {}                    列出已设的提醒，只读
 - cancelReminder  {label}               取消提醒；label 写「全部」则全部取消
@@ -103,9 +117,31 @@ export function describeAction(a: ActionSpec): string {
       : `取消提醒「${g.label}」`
     case 'openPage': return `跳到「${g.page}」页面`
     case 'cleanupArticle': return `整理文章《${g.title}》`
+    case 'replaceTranslation': return g.mode === 'rebuild'
+      ? `按你给的材料重排《${g.title}》的原文和译文`
+      : `用你给的译文替换《${g.title}》里对得上的句子`
+    case 'enrichArticleWords': return `给《${g.title}》里划线的词补释义`
+    case 'setSentence': return `改《${g.title}》第 ${g.index} 句`
+    case 'splitSentence': return `把《${g.title}》第 ${g.index} 句拆成两句`
+    case 'mergeSentences': return `合并《${g.title}》第 ${g.index} 句起的 ${g.count || 2} 句`
     case 'queryWords': return '查词（只读）'
     default: return `${a.tool}（未知操作）`
   }
+}
+
+import { parseBilingual, applyTranslation, reanchorMarks } from './pasteTranslation'
+import { readJson } from '@/shared/core/safeStorage'
+
+/** 按标题找文章：几个改文章的操作共用 */
+function findArticle(readerStore: any, title: unknown): { art: any } | { error: string } {
+  const t = String(title || '').trim()
+  if (!t) return { error: '要说是哪篇文章' }
+  const hits = (readerStore.articles || []).filter((x: any) => String(x.title || '').includes(t))
+  if (!hits.length) return { error: `没找到标题包含「${t}」的文章` }
+  if (hits.length > 1) {
+    return { error: `「${t}」对上了好几篇：${hits.slice(0, 5).map((x: any) => x.title).join('、')}，说具体一点` }
+  }
+  return { art: hits[0] }
 }
 
 /**
@@ -264,6 +300,134 @@ export async function runAction(a: ActionSpec, deps: ActionDeps): Promise<Action
         return { ok: true, summary: `已经跳到「${g.page}」了` }
       }
 
+      case 'enrichArticleWords': {
+        const found = findArticle(readerStore, g.title)
+        if ('error' in found) return { ok: false, summary: found.error }
+        const art = found.art
+
+        // 这篇里划过线的词，取词库里对应的词条
+        const wanted = new Set(
+          (art.marks || [])
+            .map((m: any) => String(m.text || '').trim().toLowerCase())
+            .filter((t: string) => /^[a-z][a-z'-]*$/.test(t))
+        )
+        if (!wanted.size) return { ok: false, summary: `《${art.title}》里还没有划线的词` }
+
+        const words = wordStore.words.filter((w: any) => wanted.has(String(w.word).toLowerCase()))
+        if (!words.length) return { ok: false, summary: '划线的词都还没进词库，先收藏一下' }
+
+        const { enrichWordsWithAi, needsAiEnrich } = await import('./aiEnrich')
+        const todo = words.filter((w: any) => needsAiEnrich(w))
+        if (!todo.length) return { ok: true, summary: `《${art.title}》里这 ${words.length} 个词信息都是全的，不用补` }
+
+        const changed = await enrichWordsWithAi(todo, undefined, {
+          // 每批存一次：中途断了也不白跑
+          onBatchDone: async (batch: any[]) => {
+            for (const w of batch) await wordStore.updateWordFields(w.id, w)
+          }
+        })
+        return { ok: true, summary: `补好了 ${changed.length} / ${todo.length} 个词（这篇划线共 ${words.length} 个）` }
+      }
+
+      /** 几个改句子的操作共用：找文章 + 取句子 + 存回去 */
+      case 'setSentence':
+      case 'splitSentence':
+      case 'mergeSentences': {
+        const found = findArticle(readerStore, g.title)
+        if ('error' in found) return { ok: false, summary: found.error }
+        const art = found.art
+        const sentences: any[] = [...(art.sentences || [])]
+        const i = Number(g.index) - 1
+        if (!Number.isInteger(i) || i < 0 || i >= sentences.length) {
+          return { ok: false, summary: `第 ${g.index} 句不存在（这篇一共 ${sentences.length} 句）` }
+        }
+        let summary = ''
+
+        if (a.tool === 'setSentence') {
+          const zh = g.zh == null ? null : String(g.zh)
+          const en = g.en == null ? null : String(g.en)
+          if (zh == null && en == null) return { ok: false, summary: '没说要改成什么' }
+          sentences[i] = { ...sentences[i], ...(zh != null ? { zh } : {}), ...(en != null ? { en } : {}) }
+          summary = `改好了第 ${g.index} 句的${[zh != null ? '译文' : '', en != null ? '原文' : ''].filter(Boolean).join('和')}`
+        } else if (a.tool === 'splitSentence') {
+          const at = String(g.at || '').trim()
+          const en = String(sentences[i].en || '')
+          const cut = at ? en.indexOf(at) : -1
+          if (cut < 0) return { ok: false, summary: `第 ${g.index} 句里找不到「${at}」，没法确定从哪儿拆` }
+          const head = en.slice(0, cut + at.length).trim()
+          const tail = en.slice(cut + at.length).trim()
+          if (!head || !tail) return { ok: false, summary: '拆开后有一半是空的，换个位置' }
+          // 译文没法自动分，整句先留给前半句，后半句空着
+          sentences.splice(i, 1, { ...sentences[i], en: head }, { en: tail, zh: '' })
+          summary = `第 ${g.index} 句拆成两句了，后半句译文空着`
+        } else {
+          const count = Math.max(2, Number(g.count) || 2)
+          const part = sentences.slice(i, i + count)
+          if (part.length < 2) return { ok: false, summary: '后面没有可以合并的句子了' }
+          sentences.splice(i, part.length, {
+            ...part[0],
+            en: part.map(s => String(s.en || '').trim()).filter(Boolean).join(' '),
+            zh: part.map(s => String(s.zh || '').trim()).filter(Boolean).join('')
+          })
+          summary = `第 ${g.index} 句起的 ${part.length} 句合成一句了`
+        }
+
+        await readerStore.saveArticle({ ...art, sentences, updatedAt: new Date().toISOString() })
+        return { ok: true, summary }
+      }
+
+      case 'replaceTranslation': {
+        const text = String(g.text || '')
+        if (!text.trim()) return { ok: false, summary: '要有译文内容' }
+        const found = findArticle(readerStore, g.title)
+        if ('error' in found) return { ok: false, summary: found.error }
+        const full = found.art
+
+        const pairs = parseBilingual(text)
+        if (!pairs.length) return { ok: false, summary: '这段材料里没找到「英文句 + 中文句」的配对' }
+
+        /**
+         * rebuild：整篇按材料重排。
+         * 逐句匹配对不上时（原文断句跟材料差太多）用它，原文和译文都取材料里的。
+         */
+        if (g.mode === 'rebuild') {
+          const next = pairs.map(p => ({ en: p.en, zh: p.zh }))
+          // 划线标记按原文重新锚到新句子上，否则句号一变标记就全错位
+          const re = reanchorMarks(full.marks || [], next.map(s => s.en))
+          await readerStore.saveArticle({
+            ...full,
+            sentences: next,
+            marks: re.kept,
+            updatedAt: new Date().toISOString()
+          })
+          return {
+            ok: true,
+            summary: `《${full.title}》按材料重排成 ${next.length} 句` +
+              (full.marks?.length
+                ? `；划线 ${re.kept.length} 个跟着对上了${re.dropped ? `，${re.dropped} 个在新材料里找不到，已去掉` : ''}`
+                : '')
+          }
+        }
+
+        const sentences: any[] = full.sentences || []
+        if (!sentences.length) return { ok: false, summary: `《${full.title}》还没有分句` }
+
+        const r = applyTranslation(sentences.map((s: any) => s.en || ''), pairs)
+        if (!r.matched) return { ok: false, summary: '一句都没对上，多半不是同一篇文章' }
+
+        await readerStore.saveArticle({
+          ...full,
+          sentences: sentences.map((s: any, i: number) => (r.zh[i] ? { ...s, zh: r.zh[i] } : s)),
+          updatedAt: new Date().toISOString()
+        })
+        const left = r.total - r.matched
+        return {
+          ok: true,
+          summary: `《${full.title}》换了 ${r.matched} / ${r.total} 句` +
+            (left ? `，另外 ${left} 句在材料里没找到对应，保持原样` : '')
+        }
+      }
+
       case 'cleanupArticle': {
         const title = String(g.title || '').trim()
         const art = readerStore.articles.find((x: any) => x.title.includes(title))
@@ -327,7 +491,7 @@ function save() {
 
 export function loadReminders() {
   try {
-    const raw = JSON.parse(localStorage.getItem('lb-reminders') || '[]')
+    const raw = readJson('lb-reminders', [] as any)
     if (Array.isArray(raw)) {
       reminders.length = 0
       for (const r of raw) if (r?.label && r?.minutes) reminders.push(r)

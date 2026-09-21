@@ -55,6 +55,7 @@ import { computed, ref, watch } from 'vue'
 import type { WordItem } from '@/shared/types/WordItem'
 import type { FamilyNote, NoteKind, LexIndex } from '@/shared/core/wordFamily'
 import { getIndex, noteOptionsFor, buildNote, buildTopicNote, saveFamilyNote, aiReviewNote } from '@/shared/core/familyNoteService'
+import { buildRootNote } from '@/shared/core/wordFamily'
 import { exportNodeAsPng, downloadBlob } from '@/shared/core/exportImage'
 import { toast } from '@/shared/core/toast'
 import NoteSheet from './NoteSheet.vue'
@@ -70,6 +71,10 @@ const props = defineProps<{
   words: WordItem[]
   word?: WordItem | null
   members?: string[]
+  /** 星系的扩散层数：2 层时关系笔记把相关词的相关词也列出来 */
+  depth?: number
+  /** 以这个词根为中心生成笔记（词汇宇宙的词根维度用） */
+  rootQuery?: string
   title?: string
   preset?: FamilyNote | null
   presetLayout?: 'list' | 'radial'
@@ -105,12 +110,15 @@ async function rebuild() {
   busy.value = true
   try {
     idx.value = await getIndex(props.words)
-    if (props.members?.length) {
+    if (props.rootQuery) {
+      note.value = buildRootNote(idx.value, props.rootQuery)
+      if (!note.value) toast(`词库里没有跟「${props.rootQuery}」同根的词`, 'error')
+    } else if (props.members?.length) {
       note.value = buildTopicNote(idx.value, props.title || '话题', props.members, props.groups ? { groups: props.groups } : {})
     } else if (props.word) {
       const opts = noteOptionsFor(idx.value, props.word.word)
       if (!opts.some(o => o.kind === kind.value)) kind.value = opts[0]?.kind || 'synonym'
-      note.value = buildNote(idx.value, kind.value, props.word.word)
+      note.value = buildNote(idx.value, kind.value, props.word.word, props.depth || 1)
     } else note.value = null
   } catch (e) {
     note.value = null
@@ -120,8 +128,8 @@ async function rebuild() {
   }
 }
 
-watch(() => [props.word?.id, props.members?.join(','), props.preset], rebuild, { immediate: true })
-watch(kind, () => { if (props.word && idx.value) { note.value = buildNote(idx.value, kind.value, props.word.word); saved.value = false } })
+watch(() => [props.word?.id, props.members?.join(','), props.rootQuery, props.preset], rebuild, { immediate: true })
+watch([kind, () => props.depth], () => { if (props.word && idx.value) { note.value = buildNote(idx.value, kind.value, props.word.word, props.depth || 1); saved.value = false } })
 
 function removeWord(w: string) {
   if (!note.value) return

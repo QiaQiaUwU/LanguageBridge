@@ -8,7 +8,7 @@
 
     <div class="sheet-body">
       <div class="sheet-main">
-        <section v-for="b in note.branches" :key="b.label" class="sb">
+        <section v-for="b in note.branches" :key="b.label" class="sb" :class="branchClass(b.label)">
           <div v-if="note.branches.length > 1 || note.kind === 'root'" class="sb-label">{{ b.label }}</div>
           <div
             v-for="w in visibleWords(b.words)"
@@ -67,6 +67,11 @@ defineEmits<{ (e: 'pick', w: string): void; (e: 'remove', w: string): void }>()
 const LINK_MARK: Record<LinkKind, string> = { syn: '≈', ant: '↔', root: '∽', confuse: '≠', base: '←' }
 const LINK_NAME: Record<LinkKind, string> = { syn: '同义', ant: '反义', root: '同词根', confuse: '易混', base: '基词' }
 
+/** 关系笔记的四块，各用各的荧光色 */
+function branchClass(label: string): string {
+  return { 派生: 'b-deriv', 同根: 'b-root', 近义: 'b-syn', 反义: 'b-ant' }[label] || ''
+}
+
 function visibleWords(list: NoteWord[]) {
   return props.showLow ? list : list.filter(w => w.confidence >= 0.7 || w.added)
 }
@@ -74,13 +79,23 @@ function visibleWords(list: NoteWord[]) {
 
 <style scoped>
 .sheet {
-  --hl: color-mix(in srgb, var(--c-accent) 22%, transparent);
+  /**
+   * 两支荧光笔：--hl 标一级词，--hl2 标它的派生与关系词。
+   * 颜色由设置页写到 :root 上（--note-hl1 / --note-hl2），没设过就用这里的默认值。
+   */
+  --hl: var(--note-hl1, color-mix(in srgb, var(--c-accent) 22%, transparent));
+  --hl2: var(--note-hl2, color-mix(in srgb, var(--c-note-green, var(--c-accent)) 26%, transparent));
   padding: var(--space-sm);
   background: var(--c-surface);
   color: var(--c-text);
   font-size: var(--text-sm);
   line-height: 1.55;
 }
+/* 关系笔记的四块各用一支笔；二级（派生 / 关系词）统一用 --hl2 */
+.b-deriv { --hl: var(--note-hl-deriv, color-mix(in srgb, var(--c-note-purple) 26%, transparent)); }
+.b-root  { --hl: var(--note-hl-root, color-mix(in srgb, var(--c-note-orange) 30%, transparent)); }
+.b-syn   { --hl: var(--note-hl-syn, color-mix(in srgb, var(--c-note-green, var(--c-accent)) 26%, transparent)); }
+.b-ant   { --hl: var(--note-hl-ant, color-mix(in srgb, var(--c-note-red, var(--c-warn)) 26%, transparent)); }
 .k-synonym { --hl: color-mix(in srgb, var(--c-note-purple) 26%, transparent); }
 .k-topic { --hl: color-mix(in srgb, var(--c-note-yellow) 34%, transparent); }
 .k-root { --hl: color-mix(in srgb, var(--c-note-orange) 30%, transparent); }
@@ -122,7 +137,12 @@ function visibleWords(list: NoteWord[]) {
 .nw-deriv, .nw-phrase { display: flex; align-items: baseline; gap: var(--space-xs); margin-left: var(--space-sm); }
 .arrow { color: var(--c-text-3); }
 .ph-en { font-style: italic; }
-.nw-links { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-xs); margin: 2px 0 0 var(--space-sm); }
+.nw-links { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-xs); margin: 2px 0 0 var(--space-md); }
+/* 二级：往里缩一格，用第二支荧光笔 */
+.nw-deriv { margin-left: var(--space-md); }
+.nw-links .nl { background: linear-gradient(transparent 60%, var(--hl2) 60%); }
+.nw-deriv .nw-word,
+.nw-deriv > span:first-child { background: linear-gradient(transparent 55%, var(--hl2) 55%); }
 .nl { font-size: var(--text-xs); color: var(--c-text-2); }
 .nl small { color: var(--c-text-3); }
 .nl.syn { color: var(--c-info); }

@@ -261,7 +261,6 @@ import { useRouter } from 'vue-router'
 import { tasks } from '@/shared/core/taskCenter'
 import { readSyllabus, syllabusReady, listSyllabuses, saveSyllabus, clearSyllabus } from '@/shared/core/syllabus'
 import { ensureSyllabus } from '@/shared/core/syllabusTask'
-import { getStudySettings } from '@/shared/core/studySettings'
 import type { GraphNode, GraphLink } from '@/apps/word-core/components/WordGraph3D.vue'
 const WordGraph3D = defineAsyncComponent(
   () => import('@/apps/word-core/components/WordGraph3D.vue')

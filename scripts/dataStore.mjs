@@ -426,6 +426,27 @@ export function createDataStore(rootDir, resourcesDir) {
     return true
   }
 
+  /**
+   * 批量删：一次读、一次写。
+   *
+   * 逐条调 remove() 会把整个集合文件重写一遍 —— 三千条重复词就是三千次全量重写，
+   * 慢到实际上跑不完，界面上看着就是「整理了也没变」。
+   */
+  function removeMany(name, ids, idKey = 'id') {
+    const set = new Set(ids)
+    if (!set.size) return 0
+    if (PER_FILE_COLLECTIONS.has(name)) {
+      let n = 0
+      for (const id of set) if (removePerFileItem(name, id)) n++
+      return n
+    }
+    const list = readCollection(name)
+    const kept = list.filter(x => !set.has(x[idKey]))
+    const removed = list.length - kept.length
+    if (removed) writeCollection(name, kept)
+    return removed
+  }
+
   function nextAutoId(name) {
     const list = readCollection(name)
     return list.reduce((max, x) => Math.max(max, x.id || 0), 0) + 1
@@ -465,5 +486,5 @@ export function createDataStore(rootDir, resourcesDir) {
   // 前端第一次请求 /api/articles 读到的已经是拆好的文件。
   for (const name of PER_FILE_COLLECTIONS) migrateToPerFile(name)
 
-  return { readCollection, writeCollection, upsert, upsertMany, remove, nextAutoId, migrateToPerFile, flushNow, DATA_DIR, RESOURCES_DIR }
+  return { readCollection, writeCollection, upsert, upsertMany, remove, removeMany, nextAutoId, migrateToPerFile, flushNow, DATA_DIR, RESOURCES_DIR }
 }

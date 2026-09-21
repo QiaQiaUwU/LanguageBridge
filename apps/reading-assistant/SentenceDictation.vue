@@ -3,6 +3,7 @@
     <!-- 顶栏：返回 · 标题 · 进度 · 设置 -->
     <header class="sd-head">
       <BackLink label="返回" @back="leave" />
+      <button v-if="phase === 'run'" class="ghost-btn small" title="结束并看结果" @click="finish(true)">结束</button>
       <div class="sd-title">{{ title }}</div>
       <span v-if="phase === 'run'" class="sd-count">{{ cursor + 1 }} / {{ queue.length }}</span>
       <FoldToggle v-if="phase !== 'result'" v-model:folded="setFolded" side="down" class="sd-set-btn" />
@@ -44,15 +45,35 @@
     <!-- 准备 -->
     <main v-if="phase === 'ready'" class="sd-main sd-ready">
       <span v-if="loading" class="ui-spin"></span>
+      <!-- 上次没听完：接着听，还是从头来 -->
+      <template v-else-if="draftLeft">
+        <p class="sd-resume-line">从第 {{ (draft?.cursor ?? 0) + 1 }} 句开始 · 共 {{ draft?.queue.length }} 句</p>
+        <div class="sd-resume-btns">
+          <button class="start-btn" @click="resume">继续</button>
+          <button class="ghost-btn" @click="start()">重新开始</button>
+        </div>
+      </template>
       <EmptyState v-else />
     </main>
 
     <!-- 逐句听写 -->
     <main v-else-if="phase === 'run' && current" class="sd-main">
-      <button class="sd-play" :class="{ playing }" title="播放 Ctrl" @click="play()">
-        <i :class="playing ? 'ri-volume-up-fill' : 'ri-play-fill'"></i>
+      <button class="sd-play" :class="{ playing }" :title="playing ? '暂停' : '播放 Ctrl'" @click="playing ? stopPlay() : play()">
+        <i :class="playing ? 'ri-pause-fill' : 'ri-play-fill'"></i>
       </button>
-      <div class="sd-replays" title="本句播放次数"><i class="ri-repeat-2-line"></i>{{ currentItem.replays }}</div>
+
+      <!-- 句内进度：拖到这句的任意位置接着放（没有原声时是朗读，拖不了） -->
+      <input
+        v-if="segDuration > 0"
+        class="sd-seek"
+        type="range"
+        min="0"
+        :max="segDuration"
+        step="0.05"
+        :value="segTime"
+        title="播放进度"
+        @input="seekSegment(($event.target as HTMLInputElement).valueAsNumber)"
+      />
 
       <p v-if="cfg.zh && current.zh" class="sd-zh">{{ current.zh }}</p>
 
@@ -128,6 +149,7 @@
             <button :class="{ on: resultView === 'all' }" @click="resultView = 'all'">全部</button>
             <button :class="{ on: resultView === 'wrong' }" @click="resultView = 'wrong'">错句</button>
           </div>
+          <button v-if="!readonlyRecord && draftLeft" class="ghost-btn small" @click="resume">继续（剩 {{ draft?.queue.length }} 句）</button>
           <button v-if="!readonlyRecord && wrongIdx.length" class="ghost-btn small" @click="retryWrong">重练错句</button>
           <button class="ghost-btn small" @click="exportText">导出</button>
         </div>
@@ -156,6 +178,7 @@
 </template>
 
 <script setup lang="ts">
+import { readJson } from '@/shared/core/safeStorage'
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReaderStore } from './stores/readerStore'
@@ -203,7 +226,7 @@ const cfg = reactive({
   rate: 1, repeat: 1, source: 'auto' as 'auto' | 'tts', instant: true, slots: true, zh: false, strict: false,
   live: false, mode: 'full' as 'full' | 'cloze'
 })
-try { Object.assign(cfg, JSON.parse(localStorage.getItem(CFG_KEY) || '{}')) } catch { /* 坏配置忽略 */ }
+try { Object.assign(cfg, readJson(CFG_KEY, {} as any)) } catch { /* 坏配置忽略 */ }
 watch(cfg, v => localStorage.setItem(CFG_KEY, JSON.stringify(v)), { deep: true })
 const setFolded = ref(true)
 const RATES = [0.5, 0.6, 0.75, 0.9, 1, 1.1, 1.25, 1.5]
@@ -295,7 +318,7 @@ const DRAFT_KEY = computed(() => `lb-sd-draft:${articleId.value}`)
 interface Draft { queue: number[]; items: DictationItem[]; cursor: number; startedAt: number }
 const draft = ref<Draft | null>(null)
 function loadDraft() {
-  try { draft.value = JSON.parse(localStorage.getItem(DRAFT_KEY.value) || 'null') } catch { draft.value = null }
+  try { draft.value = readJson(DRAFT_KEY.value, null as any) } catch { draft.value = null }
 }
 function saveDraft() {
   if (phase.value !== 'run') return
@@ -303,6 +326,8 @@ function saveDraft() {
   localStorage.setItem(DRAFT_KEY.value, JSON.stringify(d))
 }
 function clearDraft() { localStorage.removeItem(DRAFT_KEY.value); draft.value = null }
+/** 还有没听完的进度 */
+const draftLeft = computed(() => !!draft.value && draft.value.cursor < draft.value.queue.length)
 
 function blankItem(idx: number): DictationItem {
   const s = sentences.value[idx]
@@ -355,12 +380,42 @@ function segmentOf(s: ArticleSentence): [number, number] | null {
   return [s.audioStart, end]
 }
 
+/* 句内进度：seg 是这句在整段音频里的起止 */
+const segTime = ref(0)
+const segDuration = ref(0)
+let segStart = 0
+// 换一句就把进度条清掉，别把上一句的长度留在那儿
+watch(cursor, () => { segDuration.value = 0; segTime.value = 0 })
+function onSegTimeUpdate() {
+  if (!audio) return
+  segTime.value = Math.max(0, Math.min(segDuration.value, audio.currentTime - segStart))
+}
+/** 拖进度：从这句里的某个位置接着放，放到句尾自动停 */
+function seekSegment(t: number) {
+  const s = current.value
+  const seg = s ? segmentOf(s) : null
+  if (!audio || !seg) return
+  if (stopTimer) { clearTimeout(stopTimer); stopTimer = null }
+  audio.currentTime = seg[0] + t
+  segTime.value = t
+  playing.value = true
+  audio.play().catch(() => undefined)
+  const ms = ((seg[1] - audio.currentTime) / cfg.rate) * 1000 + 60
+  stopTimer = setTimeout(() => { audio?.pause(); playing.value = false }, Math.max(0, ms))
+}
+
 async function playOnce(s: ArticleSentence, token: number) {
   const seg = segmentOf(s)
   if (!seg) { await playSentence(s.en, 0.92 * cfg.rate); return }
-  if (!audio) audio = new Audio(article.value!.audioUrl!)
+  if (!audio) {
+    audio = new Audio(article.value!.audioUrl!)
+    audio.addEventListener('timeupdate', onSegTimeUpdate)
+  }
   audio.playbackRate = cfg.rate
   audio.currentTime = seg[0]
+  segStart = seg[0]
+  segDuration.value = Math.max(0, seg[1] - seg[0])
+  segTime.value = 0
   await audio.play().catch(() => undefined)
   await new Promise<void>(res => {
     const ms = ((seg[1] - seg[0]) / cfg.rate) * 1000 + 60
@@ -399,6 +454,7 @@ async function playSlow() {
 
 function stopPlay() {
   playToken++
+  segTime.value = 0
   if (stopTimer) { clearTimeout(stopTimer); stopTimer = null }
   audio?.pause()
   stopAll()
@@ -450,8 +506,38 @@ function hint() {
   nextTick(() => inputEl.value?.focus())
 }
 
-async function finish() {
+/**
+ * 结算。
+ *
+ * early = true 是中途「结束」：只结算已经做过的那几句，
+ * 剩下的留成草稿，下次进来可以选继续还是重新开始。
+ */
+async function finish(early = false) {
   stopPlay()
+  if (early) {
+    const cur = items.value[cursor.value]
+    const done = cursor.value + (cur && (cur.ops.length || cur.typed?.trim()) ? 1 : 0)
+    if (!done) { toast('还没有作答', 'error'); return }
+    if (done < items.value.length) {
+      // 先把没做的部分留下来，再把已做的交给下面的正常结算
+      const rest: Draft = {
+        queue: queue.value.slice(done),
+        items: items.value.slice(done),
+        cursor: 0,
+        startedAt: startedAt.value
+      }
+      queue.value = queue.value.slice(0, done)
+      items.value = items.value.slice(0, done)
+      localStorage.setItem(DRAFT_KEY.value, JSON.stringify(rest))
+      draft.value = rest
+      await settle()
+      return
+    }
+  }
+  await settle()
+}
+
+async function settle() {
   for (let k = 0; k < items.value.length; k++) {
     const it = items.value[k]
     if (!it.ops.length) {
@@ -480,7 +566,8 @@ async function finish() {
   record.value = rec
   phase.value = 'result'
   resultView.value = 'all'
-  clearDraft()
+  // 中途结束时上面已经把剩下的存成草稿了，别在这儿清掉
+  if (!draftLeft.value) clearDraft()
   try {
     await saveStudyRecord(rec)
     for (const it of items.value) if (!it.skipped) await recordReview(it.accuracy === 100)
@@ -561,7 +648,8 @@ onMounted(async () => {
   loading.value = false
   // 不要准备页：有进度就接着听，没有就从第一句开始
   if (!sentences.value.length) return
-  if (draft.value && draft.value.cursor < draft.value.queue.length) resume()
+  // 有没听完的进度就停在准备页让人选，不再默认接着听
+  if (draftLeft.value) phase.value = 'ready'
   else start()
 })
 onBeforeUnmount(() => {
@@ -612,10 +700,7 @@ onBeforeUnmount(() => {
 .sd-play:active { transform: scale(.94); }
 .sd-play.playing { animation: sd-pulse 1.2s ease-in-out infinite; }
 @keyframes sd-pulse { 50% { box-shadow: 0 0 0 12px var(--c-accent-soft); } }
-.sd-replays {
-  display: inline-flex; align-items: center; gap: 3px;
-  margin-top: calc(-1 * var(--space-sm)); color: var(--c-text-3); font-size: var(--text-xs);
-}
+.sd-seek { width: min(420px, 80%); accent-color: var(--c-accent); cursor: pointer; }
 .sd-zh { margin: 0; color: var(--c-text-2); text-align: center; }
 
 .sd-slots { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-xs) var(--space-sm); max-width: 100%; }
@@ -653,6 +738,8 @@ onBeforeUnmount(() => {
   font: inherit; font-size: var(--text-2xs); padding: 1px 5px; border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, .22);
 }
+.sd-resume-line { color: var(--c-text-2); font-size: var(--text-sm); }
+.sd-resume-btns { display: flex; gap: var(--space-sm); margin-top: var(--space-sm); }
 .sd-live-score { font-weight: 700; color: var(--c-accent); font-variant-numeric: tabular-nums; }
 .sd-given { color: var(--c-text-2); font-size: var(--text-base); line-height: 1.6em; }
 .sd-slot.ok, .sd-slot.filled.ok { border-color: var(--c-success); color: var(--c-success); }

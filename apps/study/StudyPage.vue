@@ -187,7 +187,7 @@
     </div>
 
     <div class="footer-wrap" :class="{ hide: !showToolbar }">
-      <FoldToggle class="fold-arrow" side="down" :folded="!showToolbar" @update:folded="v => showToolbar = !v" />
+      <FoldToggle class="fold-arrow" side="down" :folded="!showToolbar" @update:folded="(v: boolean) => showToolbar = !v" />
       <div class="footer-card">
         <div class="stage-track">
           <div

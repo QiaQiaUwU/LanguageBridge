@@ -9,6 +9,10 @@ export interface ArticleSentence {
    * 有它就能「只播英文」= [audioStart, audioZhStart]。
    */
   audioZhStart?: number
+  /** 自然段的第一句：双语对照按段排 */
+  para?: boolean
+  /** 不是朗读内容（Part 1、题组标题这类），对轴时跳过 */
+  noAlign?: boolean
 }
 
 export interface ArticleMark {
@@ -68,6 +72,15 @@ export interface Article {
   /** 收藏 */
   starred?: boolean
   vocabBookId?: string
+  /**
+   * 试题（雅思阅读这类）：正文照常存在 sentences 里，题目单独存结构，按试卷的样子渲染。
+   * 有这个字段的文章不分章节。
+   */
+  exam?: import('@/shared/core/examPaper').ExamPaper
+  /** 自己做的答案：题号 → 答案 */
+  examAnswers?: Record<number, string>
+  /** 作文题：自己写的作文 */
+  examEssay?: string
   audioFileName?: string
   audioUrl?: string
   createdAt: string

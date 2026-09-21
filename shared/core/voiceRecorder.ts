@@ -22,7 +22,7 @@ export interface RecordingHandle {
 
 /** 浏览器支不支持录音 */
 export function recordingSupported(): boolean {
-  return !!(navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined')
+  return typeof navigator.mediaDevices?.getUserMedia === 'function' && typeof MediaRecorder !== 'undefined'
 }
 
 /**

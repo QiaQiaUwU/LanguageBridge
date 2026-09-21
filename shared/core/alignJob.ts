@@ -95,8 +95,30 @@ function pump() {
   }
   // 队列里剩下的，更新一下"前面还有几个"
   queue.forEach((q, i) => {
-    updateTask('align:' + q.articleId, { detail: `排队中（前面还有 ${i + 1} 个）` })
+    updateTask('align:' + q.articleId, { detail: '排队中' })
   })
+}
+
+/**
+ * 模型地址。本机 public/models/ 里放好的排在最前面。
+ *
+ * 之前只有主线程那条路径会去问本地，批量对轴走的是 worker，
+ * 模型地址在这里单独取，于是放了本地模型也还是每次去连不通的 huggingface。
+ */
+let localModels: string[] | null = null
+async function modelUrlsFor(): Promise<string[]> {
+  const custom = localStorage.getItem('lb-w2v2-model-url')
+  if (custom) return [custom]
+  if (localModels === null) {
+    try {
+      const res = await fetch('/api/local-models')
+      const list = res.ok ? await res.json() : []
+      localModels = Array.isArray(list) ? list.filter(u => typeof u === 'string') : []
+    } catch {
+      localModels = []
+    }
+  }
+  return [...localModels, ...MODEL_SOURCES]
 }
 
 function spawn(articleId: string, title: string, pcm: Float32Array) {
@@ -105,9 +127,6 @@ function spawn(articleId: string, title: string, pcm: Float32Array) {
 
   job.running = true
   job.msg = '准备…'
-
-  const custom = localStorage.getItem('lb-w2v2-model-url')
-  const modelUrls = custom ? [custom] : MODEL_SOURCES
 
   const w = new Worker('/align-worker.js')
   workers.set(articleId, w)
@@ -150,7 +169,14 @@ function spawn(articleId: string, title: string, pcm: Float32Array) {
       job.error = d.message
       job.running = false
       job.msg = ''
-      failTask('align:' + articleId, d.message)
+      /**
+       * 模型下不来（离线、被墙）时，整批任务全红一片，其实什么也没得到。
+       * 这种情况直接说清楚出路，不要每篇都重复一长串下载失败的地址。
+       */
+      const noModel = /模型源都下不动|下载失败|Failed to fetch|NetworkError/i.test(d.message || '')
+      failTask('align:' + articleId, noModel
+        ? '模型拿不到（离线或被墙）。可以先用「按长度估算」，或把 onnx 放进 public/models/'
+        : d.message)
       cleanup()
     }
   }
@@ -163,7 +189,7 @@ function spawn(articleId: string, title: string, pcm: Float32Array) {
   }
 
   // pcm 用 transfer 交出去，避免复制几十兆
-  w.postMessage({ kind: 'align', pcm, modelUrls }, [pcm.buffer])
+  void modelUrlsFor().then(modelUrls => w.postMessage({ kind: 'align', pcm, modelUrls }, [pcm.buffer]))
 }
 
 /**
@@ -195,7 +221,7 @@ export function startAlignJob(articleId: string, pcm: Float32Array, title = ''):
       id: 'align:' + articleId,
       kind: '对轴',
       subject: title || articleId,
-      detail: `排队中（前面还有 ${queue.length} 个）`,
+      detail: '排队中',
       cancel: () => cancelAlignJob(articleId)
     })
   }
@@ -246,8 +272,6 @@ export function transcribeRecording(
   onProgress?: (msg: string, ratio?: number) => void
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const custom = localStorage.getItem('lb-w2v2-model-url')
-    const modelUrls = custom ? [custom] : MODEL_SOURCES
     const w = new Worker('/align-worker.js')
 
     const done = (fn: () => void) => { w.terminate(); fn() }
@@ -264,6 +288,6 @@ export function transcribeRecording(
     }
     w.onerror = err => done(() => reject(new Error(err.message || 'Worker 出错')))
 
-    w.postMessage({ kind: 'transcribe', pcm, modelUrls }, [pcm.buffer])
+    void modelUrlsFor().then(modelUrls => w.postMessage({ kind: 'transcribe', pcm, modelUrls }, [pcm.buffer]))
   })
 }

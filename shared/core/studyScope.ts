@@ -1,3 +1,4 @@
+import { realMorphemes } from './wordFamily'
 import type { WordItem, WordGroup } from '@/shared/types/WordItem'
 
 export type ScopeKind = 'all' | 'group' | 'tag' | 'adhoc'
@@ -76,7 +77,7 @@ export function wordsOfScope(scope: StudyScope, allWords: WordItem[], groups: Wo
     const hit = (w: WordItem, t: string) => {
       if (w.tags?.includes(t)) return true
       if (w.topics?.includes(t)) return true
-      const m = w.morphemes
+      const m = realMorphemes(w)
       return !!m && [m.prefix?.form, m.root?.form, m.suffix?.form].includes(t)
     }
     return allWords.filter(w => tags.every(t => hit(w, t)))

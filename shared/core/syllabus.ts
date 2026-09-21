@@ -19,6 +19,7 @@
  */
 
 import type { WordItem } from '@/shared/types/WordItem'
+import { readJson } from '@/shared/core/safeStorage'
 import { askAi } from './aiClient'
 
 export interface SyllabusLesson {
@@ -79,7 +80,7 @@ export function listSyllabuses(): Array<{ key: string; syllabus: Syllabus }> {
       const k = localStorage.key(i)
       if (!k || !k.startsWith(KEY_PREFIX)) continue
       try {
-        const sy = JSON.parse(localStorage.getItem(k) || 'null')
+        const sy = readJson(k, null as any)
         if (sy && Array.isArray(sy.lessons)) out.push({ key: k.slice(KEY_PREFIX.length), syllabus: sy })
       } catch { /* 坏的跳过 */ }
     }

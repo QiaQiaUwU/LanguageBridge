@@ -193,6 +193,7 @@
 </template>
 
 <script setup lang="ts">
+import { readJson } from '@/shared/core/safeStorage'
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { WordGroup } from '@/shared/types/WordItem'
 import {
@@ -232,7 +233,7 @@ const sceneParts = reactive<Record<string, boolean>>({
   vocabulary: true, dialogues: true, reading: true,
   writing: true, sentence: false, podcast: false,
   ...(() => {
-    try { return JSON.parse(localStorage.getItem('lb-scene-parts') || '{}') } catch { return {} }
+    try { return readJson('lb-scene-parts', {} as any) } catch { return {} }
   })()
 })
 

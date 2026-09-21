@@ -26,7 +26,7 @@ export function getGradeByWrongTimes(wrongTimes?: number): Grade {
 export { Rating }
 
 export function nextCard(card: Card | undefined, grade: Grade): Card {
-  const base = card || createEmptyCard()
+  const base = (card || createEmptyCard()) as Card
   return getFsrs().next(base, new Date(), grade).card
 }
 

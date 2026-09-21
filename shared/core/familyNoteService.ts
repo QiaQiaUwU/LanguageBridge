@@ -3,12 +3,14 @@
  * 算法本体在 wordFamily.ts。
  */
 import type { WordItem } from '@/shared/types/WordItem'
+import { applyLabelOverrides } from './treeLabels'
 import {
   buildIndex, buildNote, buildTopicNote, buildTopicTree, noteOptionsFor,
-  parseResemble, parseWordRoots, zhOf, expandTopicNode,
+  parseResemble, parseWordRoots, zhOf, expandTopicNode, rootAliasState,
   type LexIndex, type FamilyNote, type NoteKind, type NoteWord, type ExternalData, type TopicTreeNode
 } from './wordFamily'
 import { superTopicOf } from './topicTaxonomy'
+import { plannedChildren } from './treeTidy'
 import { saveStudyRecord, newRecordId, todayStr, type FamilyNoteRecord } from './studyRecords'
 
 let cached: { key: string; idx: LexIndex } | null = null
@@ -36,7 +38,8 @@ async function loadExternal(): Promise<ExternalData> {
 export async function getIndex(words: WordItem[]): Promise<LexIndex> {
   let last = ''
   for (const w of words) if (w.updatedAt > last) last = w.updatedAt
-  const key = `${words.length}|${last}`
+  // 词根梳理改了合并表也要重建：词根键变了
+  const key = `${words.length}|${last}|${rootAliasState().v}`
   if (cached?.key === key) return cached.idx
   const ext = await loadExternal()
   // 让出主线程，免得点击后界面卡住看不到加载状态
@@ -51,13 +54,19 @@ export function invalidateIndex() { cached = null }
 export { noteOptionsFor, buildNote, buildTopicNote }
 
 export function topicTree(idx: LexIndex, words: WordItem[]): TopicTreeNode[] {
-  return buildTopicTree(idx, words, superTopicOf, { lazy: true })
+  // AI 改过的标签在这里套上：树结构不动，只换显示的名字
+  return applyLabelOverrides(buildTopicTree(idx, words, superTopicOf, { lazy: true }) as any) as TopicTreeNode[]
 }
 
 export async function expandTopic(idx: LexIndex, node: TopicTreeNode) {
   if (!node.pending) return
   await new Promise(r => setTimeout(r, 0))
-  expandTopicNode(idx, node)
+  // 话题树梳理过的话题按 AI 归类建，没梳理过的走本地算法
+  const planned = node.level === 2 ? plannedChildren(idx, node) : null
+  if (planned) { node.children = planned; node.pending = false }
+  else expandTopicNode(idx, node)
+  // 懒加载出来的子节点也要套
+  applyLabelOverrides([node] as any)
 }
 
 export async function saveFamilyNote(note: FamilyNote, layout: 'radial' | 'list'): Promise<FamilyNoteRecord> {

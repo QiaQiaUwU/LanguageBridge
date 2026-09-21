@@ -21,14 +21,17 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "type-check": "vue-tsc --noEmit",
-    "check": "node scripts/check-templates.mjs && node scripts/lint-ui.mjs",
+    "check": "node scripts/check-templates.mjs && node scripts/check-imports.mjs && node scripts/lint-ui.mjs",
     "app": "electron electron/main.cjs",
     "app:build": "node scripts/build-desktop.mjs",
     "app:build:raw": "electron-builder --win --x64",
     "lint:ui": "node scripts/lint-ui.mjs",
     "family:check": "node --experimental-strip-types --no-warnings scripts/family-check.mts",
     "test:family": "node --experimental-strip-types tests/familyNote.check.ts",
-    "test:family-regress": "node --experimental-strip-types --no-warnings tests/familyRegress.check.ts"
+    "test:family-regress": "node --experimental-strip-types --no-warnings tests/familyRegress.check.ts",
+    "test:audio-pair": "node --experimental-strip-types --no-warnings tests/audioPair.check.ts",
+    "test:paste-translation": "node --experimental-strip-types --no-warnings tests/pasteTranslation.check.ts",
+    "size": "node scripts/disk-report.mjs"
   },
   "dependencies": {
     "3d-force-graph": "^1.79.0",
@@ -84,19 +87,7 @@
       "dist/**",
       "scripts/**",
       "shared/**",
-      "package.json",
-      "node_modules/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "resources",
-        "to": "resources",
-        "filter": [
-          "**/*",
-          "!articles",
-          "!articles/**"
-        ]
-      }
+      "package.json"
     ],
     "win": {
       "target": [
@@ -107,7 +98,7 @@
     "directories": {
       "output": "dist-desktop"
     },
-    "asar": true
+    "asar": false
   },
   "main": "electron/main.cjs"
 }

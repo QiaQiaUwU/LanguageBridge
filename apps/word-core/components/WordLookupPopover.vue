@@ -20,6 +20,8 @@
             <button class="wl-icon" title="发音" @click="speak(wordLookupState.queryWord)">
               <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
             </button>
+            <!-- 词库里没有也能收，先建个空词条，释义交给「AI 补全」统一补 -->
+            <StarToggle small :model-value="collected" title="收藏" :disabled="collecting" @update:model-value="collectUnknown" />
           </div>
           <div class="wl-tip">未收录</div>
         </template>
@@ -49,6 +51,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, watch, ref } from 'vue'
 import { wordLookupState, closeWordLookup, runCollectMarkHook } from '@/shared/core/wordLookup'
+import { toast } from '@/shared/core/toast'
 import { playWord } from '@/shared/core/audio'
 import { useWordStore } from '@/shared/stores/wordStore'
 
@@ -79,24 +82,70 @@ function speak(w: string) {
  * 状态要看得见 —— 之前点了不亮、不提示、弹窗直接关，跟没反应一样。
  */
 const collected = computed(() => {
-  const w = wordLookupState.data?.word
+  const w = wordLookupState.data?.word || wordLookupState.queryWord
   if (!w) return false
   const hit = wordStore.words.find(x => x.word.toLowerCase() === w.toLowerCase())
   return !!hit && hit.status === 'unknown'
 })
 const collecting = ref(false)
 
+/** 词库里没有这个词：建一条只有词形的，划线照旧，释义等 AI 补全 */
+async function collectUnknown() {
+  const w = (wordLookupState.queryWord || '').trim()
+  if (!w || collecting.value) return
+  collecting.value = true
+  try {
+    const exist = wordStore.words.find(x => x.word.toLowerCase() === w.toLowerCase())
+    if (exist) {
+      await wordStore.updateWordFields(exist.id, { status: 'unknown' } as any)
+    } else {
+      await wordStore.addWord({
+        id: `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        word: w,
+        meanings: [],
+        status: 'unknown',
+        source: '阅读收藏',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      } as any)
+    }
+    await runCollectMarkHook(w, {})
+    toast('已收藏，释义可用「AI 补全」补上')
+  } catch (e) {
+    console.warn('收藏失败：', e)
+    toast('收藏失败', 'error')
+  } finally {
+    collecting.value = false
+    setTimeout(closeWordLookup, 450)
+  }
+}
+
 async function collect() {
   const d = wordLookupState.data
   if (!d || collecting.value) return
   collecting.value = true
+  /**
+   * 整个过程包在 try/finally 里。
+   *
+   * 原来中间任何一步抛异常（写词库失败、划线钩子报错），collecting 就一直是 true，
+   * 星标从此禁用、点不动，看着像「这个词莫名其妙不让收藏」。
+   */
+  try {
+    await doCollect(d)
+  } catch (e) {
+    console.warn('收藏失败：', e)
+    toast('收藏失败', 'error')
+  } finally {
+    collecting.value = false
+  }
+}
 
+async function doCollect(d: NonNullable<typeof wordLookupState.data>) {
   // 已经收过就是取消：把标记和笔记里那条一起撤掉
   if (collected.value) {
     const hit = wordStore.words.find(x => x.word.toLowerCase() === d.word.toLowerCase())
     if (hit) await wordStore.updateWordFields(hit.id, { status: 'unmarked' } as any)
     await runCollectMarkHook(d.word, { remove: true })
-    collecting.value = false
     return
   }
 
@@ -126,7 +175,6 @@ async function collect() {
   await runCollectMarkHook(d.word, { surface: wordLookupState.queryWord })
 
   // 停一下再关窗，让人看见星星亮了
-  collecting.value = false
   setTimeout(closeWordLookup, 450)
 }
 
@@ -139,14 +187,35 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') closeWordLookup()
 }
 
+/**
+ * 鼠标离开一段距离就自动关。
+ *
+ * 原来只有点别处或按 Esc 才关，看完一个词得专门去点一下，
+ * 窗口一直压在正文上。这里算光标到浮层矩形的距离，
+ * 超过 AWAY 就关；浮层上方留出触发它的那个词的高度，
+ * 免得鼠标还停在词上就被关掉。
+ */
+const AWAY = 96
+function onPointerMove(e: PointerEvent) {
+  if (!wordLookupState.visible) return
+  const pop = popRef.value
+  if (!pop) return
+  const r = pop.getBoundingClientRect()
+  const dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right)
+  const dy = Math.max(r.top - 28 - e.clientY, 0, e.clientY - r.bottom)
+  if (Math.hypot(dx, dy) > AWAY) closeWordLookup()
+}
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
   document.addEventListener('keydown', onKeydown)
+  window.addEventListener('pointermove', onPointerMove, { passive: true })
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('pointermove', onPointerMove)
 })
 
 /**

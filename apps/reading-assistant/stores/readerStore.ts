@@ -158,12 +158,26 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
+  /**
+   * 移动到分组。
+   *
+   * 书要带着它的章节一起走：章节也是独立的文章记录，
+   * 只改书那一条的话，章节仍然留在「未分组」，分组计数和筛选都对不上。
+   */
   async function moveArticlesToGroup(ids: string[], groupId: string | undefined) {
     const idSet = new Set(ids)
     for (const a of articles.value) {
-      if (idSet.has(a.id)) {
-        a.groupId = groupId
-        await saveArticle(a)
+      if (!idSet.has(a.id)) continue
+      a.groupId = groupId
+      await saveArticle(a)
+      if (a.isBook && a.chapterIds?.length) {
+        const chapters = new Set(a.chapterIds)
+        for (const c of articles.value) {
+          if (chapters.has(c.id) && c.groupId !== groupId) {
+            c.groupId = groupId
+            await saveArticle(c)
+          }
+        }
       }
     }
   }

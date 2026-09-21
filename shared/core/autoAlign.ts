@@ -46,7 +46,7 @@ export function weightOf(sentence: string): number {
 }
 
 export interface AutoAlignResult {
-  timings: { start: number; end: number }[]
+  timings: { start: number; end: number; zhStart?: number }[]
   /** 估算出来的语速，音节/秒，用来判断结果靠不靠谱 */
   syllablesPerSecond: number
 }

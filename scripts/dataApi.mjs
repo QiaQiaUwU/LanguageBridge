@@ -16,7 +16,19 @@ import { spawn, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { mapToWordItem } from './importVocabverse.mjs'
+
+/**
+ * TypeWords 导入留下的占位拆分：只有一个 root、没有释义、没有前后缀。
+ * 那个 root 其实是词族领头词（abandonment → abandon），不算词根词缀，
+ * 写回词库时允许被真正的拆分覆盖。和 shared/core/wordFamily.ts 里同名函数口径一致。
+ */
+function isPlaceholderMorphemes(m) {
+  if (!m || typeof m !== 'object') return false
+  if (m.prefix?.form || m.suffix?.form) return false
+  return !!m.root?.form && !String(m.root.meaning || '').trim()
+}
 
 function sendJson(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
@@ -88,7 +100,7 @@ function buildWordFileIndex(dir, writeIndexFile = false) {
         const cats = Array.isArray(doc.categories) && doc.categories.length
           ? doc.categories
           : (Array.isArray(doc.sources) ? doc.sources : [])
-        const m = doc.morphemes || {}
+        const m = isPlaceholderMorphemes(doc.morphemes) ? {} : (doc.morphemes || {})
         const forms = [m.prefix?.form, m.root?.form, m.suffix?.form].filter(Boolean)
         entries.push({
           w: doc.word,
@@ -461,6 +473,31 @@ export async function handleDataApi(req, res, store, urlPath) {
     sendJson(res, 200, store.upsertMany('words', payload))
     return true
   }
+  /**
+   * 本地放好的对齐模型。
+   *
+   * 放一份 onnx 到 public/models/ 就能离线对轴，但以前必须手动去控制台
+   * 设 localStorage 才会用它 —— 没人知道，于是每次都去下载、每次都失败。
+   */
+  if (urlPath === '/api/local-models' && method === 'GET') {
+    // 程序自己的目录（scripts/..），不是数据目录
+    const dir = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'models')
+    let files = []
+    try {
+      if (existsSync(dir)) files = readdirSync(dir).filter(f => /\.onnx$/i.test(f))
+    } catch { /* 读不到就当没有 */ }
+    sendJson(res, 200, files.map(f => `/models/${f}`))
+    return true
+  }
+
+  // 批量删：整理重复一次要删几千条，逐条 DELETE 会把词库文件重写几千遍
+  if (urlPath === '/api/words/bulk-delete' && method === 'POST') {
+    const payload = await readJsonBody(req)
+    const ids = Array.isArray(payload) ? payload : payload?.ids
+    if (!Array.isArray(ids)) return sendJson(res, 400, { detail: 'body 应该是 id 数组或 { ids }' }), true
+    sendJson(res, 200, { removed: store.removeMany('words', ids) })
+    return true
+  }
   m = urlPath.match(/^\/api\/words\/([^/]+)$/)
   if (m) {
     const id = decodeURIComponent(m[1])
@@ -586,7 +623,8 @@ export async function handleDataApi(req, res, store, urlPath) {
           doc.topics = u.topics
           touched = true
         }
-        if (u.morphemes && typeof u.morphemes === 'object' && !doc.morphemes) {
+        if (u.morphemes && typeof u.morphemes === 'object' && !isPlaceholderMorphemes(u.morphemes) &&
+            (!doc.morphemes || isPlaceholderMorphemes(doc.morphemes))) {
           doc.morphemes = u.morphemes
           touched = true
         }
@@ -714,7 +752,9 @@ export async function handleDataApi(req, res, store, urlPath) {
           // （比如免费词典补的音标、AI 补的话题——写回词库时"只补不覆盖"，
           //   如果词库那个字段原本就有值，补的那份只在缓存里）
           if (!item.topics?.length && old.topics?.length) item.topics = old.topics
-          if (!item.morphemes && old.morphemes) item.morphemes = old.morphemes
+          if ((!item.morphemes || isPlaceholderMorphemes(item.morphemes)) && old.morphemes && !isPlaceholderMorphemes(old.morphemes)) {
+            item.morphemes = old.morphemes
+          }
           if (!item.phonetic && old.phonetic) item.phonetic = old.phonetic
           keep.delete(item.word.toLowerCase())
         }

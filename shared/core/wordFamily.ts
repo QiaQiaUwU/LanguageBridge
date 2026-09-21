@@ -18,7 +18,7 @@ import type { WordItem } from '../types/WordItem'
 /*  输出结构                                                           */
 /* ================================================================== */
 
-export type NoteKind = 'root' | 'synonym' | 'topic' | 'decompose'
+export type NoteKind = 'root' | 'synonym' | 'topic' | 'decompose' | 'relation'
 export type LinkKind = 'syn' | 'ant' | 'root' | 'confuse' | 'base'
 
 export interface NoteLink { kind: LinkKind; word: string; zh?: string }
@@ -88,12 +88,30 @@ export function zhOf(w?: WordItem): string {
   return first
 }
 
+/**
+ * 真正的构词拆分；占位的返回 undefined。
+ *
+ * TypeWords 词典的 relWords.root 是「词族的领头词」（abandonment → abandon），
+ * 不是拉丁/希腊词根，旧的导入却把它写进了 morphemes.root，释义留空。
+ * 这种「只有 root、没有释义、没有前后缀」的记录会被当成已经拆过：
+ * AI 补全跳过它、词根树拿整词当词根。这里统一认成「没有拆分」。
+ */
+export function isPlaceholderMorphemes(m?: WordItem['morphemes'] | null): boolean {
+  if (!m) return false
+  if (m.prefix?.form || m.suffix?.form) return false
+  return !!m.root?.form && !String(m.root.meaning || '').trim()
+}
+export function realMorphemes(w?: WordItem | null): WordItem['morphemes'] | undefined {
+  const m = w?.morphemes
+  return m && !isPlaceholderMorphemes(m) ? m : undefined
+}
+
 /** 多词短语、带空格的条目不当成单词参与笔记 */
 export const isPhrase = (w: string) => /\s/.test((w || '').trim())
 
 /** 条目信息量，重复词条时留信息多的 */
 function richness(w: WordItem): number {
-  return (w.morphemes ? 3 : 0) + (w.meanings?.[0]?.chinese ? 3 : 0) + (w.synonyms?.length ? 1 : 0) +
+  return (realMorphemes(w) ? 3 : 0) + (w.meanings?.[0]?.chinese ? 3 : 0) + (w.synonyms?.length ? 1 : 0) +
     (w.topics?.length ? 1 : 0) + (w.word_family?.length ? 1 : 0) + (w.common_phrases?.length ? 1 : 0)
 }
 
@@ -282,6 +300,31 @@ export function cleanForm(form: string): string {
   return lc(form).replace(/^[-‐]+|[-‐]+$/g, '').replace(/[^a-z]/g, '')
 }
 
+/**
+ * 词根梳理的结果：同源异形的写法 → 代表写法，以及合并后统一的释义。
+ *
+ * spec / spect / spic 这种本地判断不了是不是同一个词根，交给 AI 判断过一轮（treeTidy.ts），
+ * 结果存在 localStorage，这里只负责读和套用。Node 下（测试、诊断脚本）没有 localStorage，就是空表。
+ */
+export const ROOT_ALIAS_KEY = 'lb-root-merge'
+interface RootAliasState { v: string; alias: Map<string, string>; meaning: Map<string, string> }
+let rootAliasCache: RootAliasState | null = null
+export function rootAliasState(): RootAliasState {
+  if (rootAliasCache) return rootAliasCache
+  let raw: any = null
+  try { raw = JSON.parse((globalThis as any).localStorage?.getItem(ROOT_ALIAS_KEY) || 'null') } catch { raw = null }
+  const alias = new Map<string, string>()
+  for (const [k, v] of Object.entries(raw?.alias || {})) {
+    const a = cleanForm(k), b = cleanForm(String(v))
+    if (a && b && a !== b) alias.set(a, b)
+  }
+  const meaning = new Map<string, string>(Object.entries(raw?.meaning || {}).map(([k, v]) => [k, String(v)]))
+  rootAliasCache = { v: String(raw?.v || 0), alias, meaning }
+  return rootAliasCache
+}
+/** 梳理结果写入 / 清掉之后调用，下次建索引才会用上新表 */
+export function reloadRootAliases() { rootAliasCache = null }
+
 const PREFIX_KEYS = new Set(['ex', 'in(内)', 'in(否)', 'com', 'sub', 'ad', 'dis', 'ob', 'pro', 'trans', 'syn'])
 
 /**
@@ -290,8 +333,10 @@ const PREFIX_KEYS = new Set(['ex', 'in(内)', 'in(否)', 'com', 'sub', 'ad', 'di
  * 前缀变体表只用于前缀，词根变体表只用于词根。
  */
 export function canonicalMorpheme(form: string, meaning = '', role: 'prefix' | 'root' | 'suffix' | '' = ''): string {
-  const f = cleanForm(form)
-  if (!f) return ''
+  const f0 = cleanForm(form)
+  if (!f0) return ''
+  // 词根梳理合并过的异形写法，先换成代表写法
+  const f = role === 'root' || role === '' ? rootAliasState().alias.get(f0) || f0 : f0
   if (role === 'suffix') return '-' + f
   const keys = (FORM_TO_KEYS.get(f) || []).filter(k =>
     !role ? true : role === 'prefix' ? PREFIX_KEYS.has(k) : !PREFIX_KEYS.has(k))
@@ -546,13 +591,15 @@ export function buildIndex(words: WordItem[], ext: ExternalData = {}): LexIndex 
     if (e.meaning && !morphMeaning.has(key)) morphMeaning.set(key, e.meaning)
   }
   for (const w of words) {
-    const m = w.morphemes
+    const m = realMorphemes(w)
     if (!m) continue
     for (const role of ['prefix', 'root', 'suffix'] as const) {
       const p = m[role]
       if (!p?.form) continue
       const key = canonicalMorpheme(p.form, p.meaning, role)
-      pushMorph(key, { word: w.word, role, form: cleanForm(p.form), meaning: p.meaning || '' })
+      // 梳理过的词根用统一释义：spec「看」、spect「观察」本来会被当成两个意思再拆开
+      const unified = role === 'root' ? rootAliasState().meaning.get(key) : undefined
+      pushMorph(key, { word: w.word, role, form: cleanForm(p.form), meaning: unified || p.meaning || '' })
     }
   }
   // 自动合并：terri / terr、legis / leg 这类「一个是另一个的前缀且释义一致」
@@ -665,8 +712,10 @@ export function buildIndex(words: WordItem[], ext: ExternalData = {}): LexIndex 
     for (const s of w.synonyms || []) if (has(s.word)) addSyn(syn, a, lc(s.word), 1)
     for (const m of w.meanings || []) for (const s of m.synonyms || []) if (has(s)) addSyn(syn, a, lc(s), 0.9)
     for (const x of w.antonyms || []) {
-      if (!has(x.word)) continue
-      const b = lc(x.word)
+      // 反义词有的地方是 {word}，有的地方直接是字符串，两种都认
+      const raw = typeof x === 'string' ? x : x?.word
+      if (!raw || !has(raw)) continue
+      const b = lc(raw)
       if (!ant.has(a)) ant.set(a, new Set())
       if (!ant.has(b)) ant.set(b, new Set())
       ant.get(a)!.add(b); ant.get(b)!.add(a)
@@ -747,7 +796,7 @@ export function derivTree(idx: LexIndex, word: string, depth = 2): string[] {
 }
 
 export function formulaOf(idx: LexIndex, w: WordItem): string {
-  const m = w.morphemes
+  const m = realMorphemes(w)
   if (!m) return ''
   const parts: string[] = []
   for (const role of ['prefix', 'root', 'suffix'] as const) {
@@ -774,11 +823,25 @@ export function expandWord(idx: LexIndex, word: string, opts: ExpandOptions = {}
   const links: NoteLink[] = []
   const base = idx.baseOf.get(lc(w.word))
   if (base && !ex.has(lc(base.base))) links.push({ kind: 'base', word: base.base, zh: zhOf(idx.byWord.get(lc(base.base))) })
+  /**
+   * 同义、反义要跟这个词的释义对得上。
+   *
+   * 词典给的关系是按整词给的，不分义项：barren 连 childless（无子女的）、
+   * brook 连 tolerate（容忍）、prince 的反义词是 toad，
+   * 放进「环境」「社会生活」这些话题笔记里全是噪声。
+   * 这里要求中文释义有重合；一个都没有时，只有外部同义词表那种高权重的才留一个。
+   */
+  const RELATED = 0.08
   const syns = [...(idx.syn.get(lc(w.word)) || new Map()).entries()]
     .filter(([s]) => !ex.has(s))
-    .sort((a, b) => b[1] - a[1] || (idx.rank.get(a[0]) ?? 5) - (idx.rank.get(b[0]) ?? 5))
-  for (const [s] of syns.slice(0, 2)) links.push({ kind: 'syn', word: idx.byWord.get(s)!.word, zh: zhOf(idx.byWord.get(s)) })
-  for (const a of [...(idx.ant.get(lc(w.word)) || [])].filter(a => !ex.has(a)).slice(0, 1)) links.push({ kind: 'ant', word: idx.byWord.get(a)!.word, zh: zhOf(idx.byWord.get(a)) })
+    .map(([s, weight]) => ({ s, weight, rel: glossOverlap(w, idx.byWord.get(s)) }))
+    .sort((a, b) => b.rel - a.rel || b.weight - a.weight || (idx.rank.get(a.s) ?? 5) - (idx.rank.get(b.s) ?? 5))
+  let picked = syns.filter(x => x.rel >= RELATED).slice(0, 2)
+  if (!picked.length) picked = syns.filter(x => x.weight >= 0.95).slice(0, 1)
+  for (const { s } of picked) links.push({ kind: 'syn', word: idx.byWord.get(s)!.word, zh: zhOf(idx.byWord.get(s)) })
+  const ants = [...(idx.ant.get(lc(w.word)) || [])]
+    .filter(a => !ex.has(a) && glossOverlap(w, idx.byWord.get(a)) >= RELATED)
+  for (const a of ants.slice(0, 1)) links.push({ kind: 'ant', word: idx.byWord.get(a)!.word, zh: zhOf(idx.byWord.get(a)) })
   return {
     word: w.word, zh: zhOf(w), pos: posOf(w), formula: formulaOf(idx, w),
     derivs, phrases, links: links.slice(0, opts.maxLinks ?? 3), evidence, confidence
@@ -795,6 +858,17 @@ export function confusablesOf(idx: LexIndex, word: string, rootKey?: string, lim
     if (k[0] !== w[0] && k.slice(-3) !== w.slice(-3)) continue
     const d = editDistance(k, w)
     if (d > 2 || d === 0) continue
+    /**
+     * 光看编辑距离 ≤2 太松：market/basket、mark/shark 都能进来，
+     * 可它们既不同源也不像，摆在「易混」里只是噪声。
+     * 差一个字母的直接算；差两个的要求前缀至少重合 3 个字母
+     * （remark / remain 这种才是真会看错的）。
+     */
+    if (d === 2) {
+      let common = 0
+      while (common < k.length && common < w.length && k[common] === w[common]) common++
+      if (common < 3) continue
+    }
     // 同一词族的不算易混
     if (sameFamily(idx, k, w)) continue
     const r = rootKeyOf(item)
@@ -806,7 +880,7 @@ export function confusablesOf(idx: LexIndex, word: string, rootKey?: string, lim
 
 let lastIdx: LexIndex | null = null
 function rootKeyOf(w?: WordItem): string {
-  const r = w?.morphemes?.root
+  const r = realMorphemes(w)?.root
   if (!r?.form) return ''
   const base = canonicalMorpheme(r.form, r.meaning, 'root')
   // 同形异义拆过键的，按词实际所在的键返回
@@ -823,6 +897,19 @@ function rootKeyOf(w?: WordItem): string {
 function isPrefixDeriv(d?: DerivLink): boolean {
   return !!d && /-$/.test(d.how)
 }
+/** 一组词按词族收成叶子节点（话题树最底层） */
+export function familyLeafNodes(idx: LexIndex, words: string[], parentId: string, level: number): TopicTreeNode[] {
+  const fam = new Map<string, string[]>()
+  for (const k of words) {
+    const h = familyHead(idx, k)
+    const head = words.includes(h) ? h : k
+    if (!fam.has(head)) fam.set(head, [])
+    fam.get(head)!.push(k)
+  }
+  return [...fam.entries()].filter(([, m]) => m.length >= 2)
+    .map(([h, m]) => ({ id: `${parentId}/@${h}`, label: idx.byWord.get(h)?.word || h, level, words: m, children: [] }))
+}
+
 function familyHead(idx: LexIndex, word: string): string {
   let k = lc(word)
   const seen = new Set<string>()
@@ -940,7 +1027,7 @@ export function buildRootNote(idx: LexIndex, query: string, opts: { maxWords?: n
   // 按前缀分支
   const branchOf = (k: string): string => {
     const w = idx.byWord.get(k)!
-    const p = w.morphemes?.prefix
+    const p = realMorphemes(w)?.prefix
     if (p?.form) return `${cleanForm(p.form)}-${p.meaning ? `（${p.meaning}）` : ''}`
     for (const f of forms) {
       const hit = containsAtBoundary(k, f)
@@ -975,7 +1062,7 @@ export function buildRootNote(idx: LexIndex, query: string, opts: { maxWords?: n
     const ex2 = new Set(flat)
     for (const k of flat) {
       const w = idx.byWord.get(k)!
-      const suf = w.morphemes?.suffix
+      const suf = realMorphemes(w)?.suffix
       const how = idx.baseOf.get(k)?.how
       const tailSuf = [...SUFFIX_SET].filter(x => x.length >= 2 && k.endsWith(x) && k.length - x.length >= 3).sort((a, b) => b.length - a.length)[0]
       const label = suf?.form ? `-${cleanForm(suf.form)}${suf.meaning ? `（${suf.meaning}）` : ''}`
@@ -1247,8 +1334,8 @@ function wordFeatures(idx: LexIndex, k: string): Vec {
   // 同义词作为共同特征：互为同义的词更容易分到一起
   v.set('@' + k, 1.5)
   for (const [sy] of idx.syn.get(k) || []) v.set('@' + sy, 1.5)
-  const rk = w?.morphemes?.root?.form
-  if (rk) v.set('%' + canonicalMorpheme(rk, w?.morphemes?.root?.meaning, 'root'), 0.8)
+  const rk = realMorphemes(w)?.root?.form
+  if (rk) v.set('%' + canonicalMorpheme(rk, realMorphemes(w)?.root?.meaning, 'root'), 0.8)
   return v
 }
 
@@ -1670,7 +1757,7 @@ interface MorphPart { key: string; form: string; meaning: string; role: string }
 export function partsOf(idx: LexIndex, word: string): MorphPart[] {
   const w = idx.byWord.get(lc(word))
   const out: MorphPart[] = []
-  const m = w?.morphemes
+  const m = realMorphemes(w)
   if (m) {
     for (const role of ['prefix', 'root', 'suffix'] as const) {
       const p = m[role]
@@ -1823,16 +1910,87 @@ export function noteOptionsFor(idx: LexIndex, word: string): { kind: NoteKind; l
   const out: { kind: NoteKind; label: string; size: number }[] = []
   const w = idx.byWord.get(lc(word))
   if (!w) return out
+  // 关系笔记（同根 / 近义 / 反义 / 派生）放在最前：它和星系图看到的是同一批词
+  const rel = buildRelationNote(idx, word)
+  if (rel) out.push({ kind: 'relation', label: '关系', size: 10_000 })
   const rk = findMorphemeKey(idx, word)
-  if (rk) out.push({ kind: 'root', label: `词根 ${rk.replace(/\(.*\)/, '')}`, size: idx.morph.get(rk)?.length || 0 })
+  if (rk) out.push({ kind: 'root', label: '词根', size: idx.morph.get(rk)?.length || 0 })
   const syn = idx.syn.get(lc(word))?.size || 0
   out.push({ kind: 'synonym', label: '同义', size: syn + (senseTerms(w).length ? 1 : 0) })
-  if (partsOf(idx, word).length) out.push({ kind: 'decompose', label: '拆解', size: partsOf(idx, word).length * 3 })
+  // 拆解要真能生成出内容才给这个选项，否则点进去是一片空白
+  if (partsOf(idx, word).length && buildDecomposeNote(idx, word)?.branches.length) {
+    out.push({ kind: 'decompose', label: '拆解', size: partsOf(idx, word).length * 3 })
+  }
   if (w.topics?.[0]) out.push({ kind: 'topic', label: `话题 ${w.topics[0]}`, size: idx.topic.get(w.topics[0])?.size || 0 })
   return out.sort((a, b) => b.size - a.size)
 }
 
-export function buildNote(idx: LexIndex, kind: NoteKind, word: string): FamilyNote | null {
+/**
+ * 关系笔记：以这个词为中心，同根 / 近义 / 反义 / 派生 四块。
+ *
+ * 星系图画出来的就是这几类关系，笔记却按词族分支组织，
+ * 于是图上看到的词在笔记里找不到。这里直接用同一份索引，
+ * 保证「图上有的，笔记里也有」。空的那一块不显示。
+ */
+export function buildRelationNote(idx: LexIndex, word: string, depth = 1): FamilyNote | null {
+  const w = idx.byWord.get(lc(word))
+  if (!w) return null
+  const me = lc(w.word)
+  const seen = new Set([me])
+
+  const take = (keys: Iterable<string>, limit: number) => {
+    const out: NoteWord[] = []
+    for (const k of keys) {
+      const key = lc(k)
+      if (seen.has(key) || idx.inflectionOf.has(key) || !idx.byWord.has(key)) continue
+      // 扩散 2 层时，每个相关词把它自己的派生和近反义也多列几个：这就是「相关词的相关词」
+      const nw = expandWord(idx, key, depth >= 2 ? { maxDerivs: 5, maxLinks: 6 } : { maxDerivs: 3, maxLinks: 2 })
+      if (!nw) continue
+      seen.add(key)
+      out.push(nw)
+      if (out.length >= limit) break
+    }
+    return out
+  }
+
+  // 同根：词素索引里跟它共用 root 的词
+  const rootEntry = realMorphemes(w)?.root
+  const rootKey = rootEntry?.form
+    ? canonicalMorpheme(rootEntry.form, rootEntry.meaning, 'root')
+    : ''
+  const sameRoot = rootKey
+    ? (idx.morph.get(rootKey) || []).filter(e => e.role === 'root').map(e => lc(e.word))
+    : []
+
+  const syn = [...(idx.syn.get(me) || new Map()).entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => k)
+  const ant = [...(idx.ant.get(me) || [])]
+  const derivs = idx.derivsOf.get(me) || []
+
+  const branches: NoteBranch[] = []
+  const push = (label: string, words: NoteWord[]) => { if (words.length) branches.push({ label, words }) }
+  push('派生', take(derivs, 8))
+  push('同根', take(sameRoot, 8))
+  push('近义', take(syn, 8))
+  push('反义', take(ant, 6))
+  if (!branches.length) return null
+
+  const kept = branches.reduce((n, b) => n + b.words.length, 0)
+  return {
+    kind: 'relation',
+    title: w.word,
+    hub: { label: w.word, sub: zhOf(w) },
+    branches,
+    side: [{ label: '易混', items: confusablesOf(idx, w.word, rootKey).map(x => ({ kind: 'syn' as const, word: x, zh: zhOf(idx.byWord.get(lc(x))) })) }]
+      .filter(s => s.items.length),
+    stats: { candidates: derivs.length + sameRoot.length + syn.length + ant.length, kept, lowConfidence: 0 },
+    createdFrom: '关系'
+  }
+}
+
+export function buildNote(idx: LexIndex, kind: NoteKind, word: string, depth = 1): FamilyNote | null {
+  if (kind === 'relation') return buildRelationNote(idx, word, depth)
   if (kind === 'root') return buildRootNote(idx, word)
   if (kind === 'synonym') return buildSynonymNote(idx, word)
   if (kind === 'decompose') return buildDecomposeNote(idx, word)

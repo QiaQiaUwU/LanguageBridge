@@ -16,7 +16,7 @@
  */
 import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, extname, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,7 +27,18 @@ import { handleDataApi, setMediaRoot } from './dataApi.mjs'
 import { runVocabverseImportIfNeeded } from './importVocabverse.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+/** 程序自己的文件（dist、apps、node_modules…）。打包后这是只读的安装目录。 */
 const ROOT = join(__dirname, '..')
+/**
+ * 用户数据的落脚点：resources/、data/、port.txt。
+ *
+ * 开发时跟程序在一起；打包成 exe 后由 Electron 用 LB_DATA_ROOT 指到用户目录 ——
+ * portable exe 每次运行会解压到临时目录，数据写在那里下次就没了，
+ * 而且安装目录本来也可能没有写权限。
+ */
+const DATA_ROOT = process.env.LB_DATA_ROOT || ROOT
+/** 打包运行：没有源码、没有 node_modules，不要去装依赖或重新构建 */
+const PACKAGED = process.env.LB_PACKAGED === '1'
 const DIST = join(ROOT, 'dist')
 // VocabVerse 词汇解释数据的落脚点——刻意不放进 public/ 或 dist/，避免被 Vite 构建
 // 当成静态资源反复清空/复制（这批文件量大，之前放在 public/data/ 下时，
@@ -44,8 +55,8 @@ const DIST = join(ROOT, 'dist')
  * 不让改名这种收尾工作把能跑的东西弄坏。
  */
 const RESOURCES_DIR = (() => {
-  const next = join(ROOT, 'resources')
-  const legacy = join(ROOT, 'vendor-data')
+  const next = join(DATA_ROOT, 'resources')
+  const legacy = join(DATA_ROOT, 'vendor-data')
   if (!existsSync(next) && existsSync(legacy)) {
     try {
       renameSync(legacy, next)
@@ -59,6 +70,20 @@ const RESOURCES_DIR = (() => {
   // 两个都在：说明改名那次只成功了一半，或者用户自己建过。以新的为准，
   // 老的留着不动——里面可能还有东西，删了就找不回来了。
   if (existsSync(next)) return next
+  /**
+   * 打包版首次运行：安装包里带的释义库在 resources/ 下，数据目录还是空的。
+   * 整个复制过去一次，之后它就归用户管（要往里加文章、加音频）。
+   */
+  const seed = process.env.LB_SEED_RESOURCES
+  if (seed && existsSync(seed)) {
+    try {
+      cpSync(seed, next, { recursive: true })
+      console.log('已从安装目录复制一份学习资源到', next)
+    } catch (e) {
+      console.warn('复制学习资源失败，先用安装目录里的：', e.message)
+      return seed
+    }
+  }
   return next
 })()
 /** 老名字仍然导出，是因为下面几处路径拼接和 dataApi 还在用这个变量名。
@@ -68,12 +93,12 @@ const VENDOR_DATA_DIR = RESOURCES_DIR
 // 由这个本来就常驻运行的进程负责，不再需要用户单独启动 backend/ 那个 Python 服务——
 // 这是修复"文章和笔记丢失"问题的核心：以前数据只活在浏览器 IndexedDB 里，backend/
 // 需要手动启动，实际使用中几乎从没真正跑起来过，双写的另一半一直在往空气里写。
-const dataStore = createDataStore(ROOT, RESOURCES_DIR)
+const dataStore = createDataStore(DATA_ROOT, RESOURCES_DIR)
 // 音频存 <项目>/resources/media/，跟文章、词库释义放在一起。
 // 老版本落在 data/media/，setMediaRoot 里会自动搬过来。
-setMediaRoot(ROOT, RESOURCES_DIR)
+setMediaRoot(DATA_ROOT, RESOURCES_DIR)
 
-const PORT_FILE = join(ROOT, 'port.txt')
+const PORT_FILE = join(DATA_ROOT, 'port.txt')
 const DEFAULT_PORT = 58712
 // 这两个哈希标记文件特意放在项目根目录，不放 dist/ 里面——vite.config.ts 里
 // build.emptyOutDir=true，dist/ 每次构建都会被清空重建，标记存里面的话下次构建前
@@ -293,7 +318,7 @@ function migrateOldWordExplanationsLocation() {
  * 这两种情况下动手都可能盖掉数据。
  */
 function migrateArticlesToResources() {
-  const oldDir = join(ROOT, 'data', 'articles')
+  const oldDir = join(DATA_ROOT, 'data', 'articles')
   const newDir = join(RESOURCES_DIR, 'articles')
   if (!existsSync(oldDir) || existsSync(newDir)) return
   try {
@@ -347,11 +372,20 @@ function ensureDepsInstalled() {
     /* package.json 读不了的话交给下面的哈希判断 */
   }
 
-  const needInstall =
-    !existsSync(nodeModules) || currentHash !== previousHash || missing.length > 0 || forceByVersion
+  /**
+   * 有啥用啥：只有真缺包（或者整个 node_modules 没有、手动递增了 deps-version）才装。
+   *
+   * 原来 package.json 哈希一变就整轮重装 —— 改个 npm script、加个字段都会触发，
+   * 装一次好几分钟，而依赖其实一个都没变。哈希只用来记录，不再作为装的理由。
+   */
+  const needInstall = !existsSync(nodeModules) || missing.length > 0 || forceByVersion
 
   if (!needInstall) {
-    console.log('依赖已是最新，跳过安装')
+    if (currentHash !== previousHash) {
+      // package.json 变了但包都在：只更新记录，不重装
+      try { writeFileSync(DEPS_HASH_FILE, currentHash) } catch { /* 写不了不影响启动 */ }
+    }
+    console.log('依赖齐全，跳过安装')
     // 拷贝要放在 return 前面：依赖没变但 public/ort 可能还是空的
     // （比如上一版没有这一步、或者 public 被清理过）
     ensureOrtAssets()
@@ -362,8 +396,15 @@ function ensureDepsInstalled() {
     console.log(`检测到缺少依赖：${missing.slice(0, 6).join('、')}${missing.length > 6 ? ` 等 ${missing.length} 个` : ''}`)
   }
   console.log('检测到依赖需要安装/更新，正在执行 npm install（可能需要一些时间）...')
-  runNpmCommand(['install', '--no-audit', '--no-fund'], 'npm install')
-  writeFileSync(DEPS_HASH_FILE, currentHash)
+  try {
+    runNpmCommand(['install', '--no-audit', '--no-fund'], 'npm install')
+    writeFileSync(DEPS_HASH_FILE, currentHash)
+  } catch (e) {
+    // 装依赖失败（断网、镜像挂了）也不该连带着打不开：已经有 node_modules 就先用着
+    console.error('安装依赖失败：' + e.message)
+    if (!existsSync(join(ROOT, 'node_modules'))) throw e
+    console.error('先用现有的依赖启动。联网后再启动一次会自动补装。')
+  }
   ensureOrtAssets()
   try {
     const vf = join(ROOT, 'scripts', 'deps-version.txt')
@@ -390,13 +431,20 @@ function ensureOrtAssets() {
     if (existsSync(join(dest, 'ort.min.js'))) return
     mkdirSync(dest, { recursive: true })
     let n = 0
+    let bytes = 0
     for (const f of readdirSync(src)) {
       // 只要运行时和 wasm，其余（.d.ts、map）不用
       if (!/\.(js|mjs|wasm)$/.test(f)) continue
+      /**
+       * 训练版、webgl/webgpu 版一个都用不上，但它们占了这个目录的大头
+       * （整份拷过来 100MB 出头，而且 dist 里还会再有一份）。
+       */
+      if (/training|webgl|webgpu|\.min\.js\.map$/i.test(f)) continue
       copyFileSync(join(src, f), join(dest, f))
+      bytes += statSync(join(src, f)).size
       n++
     }
-    if (n) console.log(`已把语音对齐运行时拷到 public/ort/（${n} 个文件），之后离线可用`)
+    if (n) console.log(`已把语音对齐运行时拷到 public/ort/（${n} 个文件，${(bytes / 1048576).toFixed(0)}MB），之后离线可用`)
   } catch (e) {
     console.log('拷贝对齐运行时失败（不影响其他功能）:', e && e.message ? e.message : e)
   }
@@ -428,8 +476,25 @@ function ensureBuilt() {
     return
   }
   console.log('检测到源码有更新，正在重新构建...')
-  runNpmCommand(['run', 'build'], 'npm run build')
-  writeFileSync(BUILD_HASH_FILE, currentHash)
+  try {
+    runNpmCommand(['run', 'build'], 'npm run build')
+    writeFileSync(BUILD_HASH_FILE, currentHash)
+  } catch (e) {
+    /**
+     * 构建失败不该连带着打不开。
+     *
+     * 最常见的是 Windows 上的 EBUSY：已经有一个实例在跑，
+     * 占着 dist 里的图标等文件，Vite 清空/复制 public 时就失败。
+     * 上一次的构建产物还在的话，先用它启动，界面可能不是最新的，但能用。
+     */
+    console.error('构建失败：' + e.message)
+    if (!existsSync(indexHtml)) throw e
+    console.error('——————————————————————————————')
+    console.error('先用上一次的构建产物启动，界面可能不是最新的。')
+    console.error('如果报的是 EBUSY / 文件被占用：多半是已经开着一个 LanguageBridge，')
+    console.error('把它（和它的黑窗口）全部关掉再启动一次就好。')
+    console.error('——————————————————————————————')
+  }
 }
 
 async function tryPort(port) {
@@ -609,10 +674,13 @@ async function handleAiProxy(req, res) {
 }
 
 async function main() {
+  if (!existsSync(DATA_ROOT)) mkdirSync(DATA_ROOT, { recursive: true })
   migrateOldWordExplanationsLocation()
   migrateArticlesToResources()
-  ensureDepsInstalled()
-  ensureBuilt()
+  if (!PACKAGED) {
+    ensureDepsInstalled()
+    ensureBuilt()
+  }
   const preferred = readConfiguredPort()
   // let 而不是 const：端口被别的程序占住时下面的 error 处理会改它
   let port = await findFreePort(preferred)
@@ -664,6 +732,18 @@ async function main() {
       }
 
       let filePath = join(DIST, urlPath)
+
+      /**
+       * 语音对齐运行时（/ort/*）在 dist 里找不到就回落到 public/ort/。
+       *
+       * 这些文件是启动时从 node_modules 拷进 public/ 的，要再构建一次才会进 dist。
+       * 构建失败（比如重复启动撞上 EBUSY）或产物是旧的，对轴就会报
+       * "importScripts ... ort.min.js failed to load" —— 直接从源头读一份更稳。
+       */
+      if (!existsSync(filePath) && (urlPath.startsWith('/ort/') || urlPath.startsWith('/models/'))) {
+        const pub = join(ROOT, 'public', urlPath)
+        if (existsSync(pub)) filePath = pub
+      }
 
       const st = existsSync(filePath) ? await stat(filePath) : null
       const hasExt = /\.[a-zA-Z0-9]+$/.test(urlPath) // 有扩展名 = 静态资源请求，没有 = 页面路由

@@ -182,6 +182,22 @@
     <section class="card">
       <h3 class="card-title">AI 补全</h3>
 
+      <div v-for="t in TIDY_KINDS" :key="t.key" class="op-row">
+        <div class="op-info">
+          <span class="op-name">{{ t.label }}</span>
+          <span v-if="tidy[t.key].msg" class="op-desc">{{ tidy[t.key].msg }}</span>
+        </div>
+        <div class="op-form">
+          <button v-if="!tidy[t.key].running" class="ghost-btn small" :disabled="busy || tidyBusy" @click="runTidy(t.key)">
+            {{ tidy[t.key].left ? `补跑剩下的 ${tidy[t.key].left}` : '开始梳理' }}
+          </button>
+          <button v-else class="ghost-btn small" @click="tidy[t.key].stop = true">停止</button>
+          <button class="ghost-btn small" :disabled="tidyBusy || !tidy[t.key].count" @click="clearTidy(t.key)">
+            还原（{{ tidy[t.key].count }}）
+          </button>
+        </div>
+      </div>
+
       <div class="op-row">
         <div class="op-info">
           <span class="op-name">范围</span>
@@ -351,6 +367,27 @@
       <!-- ② 荧光标记 -->
       <div class="op-row">
         <div class="op-info">
+          <span class="op-name">笔记荧光色</span>
+        </div>
+        <div class="hl-rows">
+          <div v-for="p in NOTE_PENS" :key="p.key" class="hl-picker">
+            <span class="hl-tag">{{ p.label }}</span>
+            <button
+              v-for="c in HL_COLORS"
+              :key="p.key + c.name"
+              class="hl-dot"
+              :class="{ on: noteHl[p.key] === c.hex }"
+              :style="{ background: c.hex }"
+              :title="c.label"
+              @click="setNotePen(p.key, c.hex)"
+            ></button>
+            <button class="ghost-btn tiny" :disabled="!noteHl[p.key]" @click="setNotePen(p.key, '')">默认</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="op-row">
+        <div class="op-info">
           <span class="op-name">划线荧光色</span>
         </div>
         <div class="hl-picker">
@@ -454,7 +491,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { clearLabelOverrides } from '@/shared/core/treeLabels'
+import { tidyTopicTree, tidyRoots, topicPlanStats, clearTopicPlans, rootMergeStats, clearRootMerges, topicOfNode } from '@/shared/core/treeTidy'
+import { readJson } from '@/shared/core/safeStorage'
+import { getIndex, topicTree } from '@/shared/core/familyNoteService'
 import { useThemeStore } from '@/shared/stores/themeStore'
 import { useWordStore } from '@/shared/stores/wordStore'
 import { fetchTwDictList, fetchTwDict, buildTwPatch, twToWordItem } from '@/shared/core/typewordsDict'
@@ -686,7 +727,108 @@ const dupChecked = ref(false)
 const tagBookId = ref('')
 const tagValue = ref('')
 
-const busy = computed(() => deduping.value || enriching.value || aiRunning.value || aiProbing.value)
+/* ---------- 两棵树的 AI 梳理 ---------- */
+type TidyKind = 'topic' | 'root'
+const TIDY_KINDS: { key: TidyKind; label: string }[] = [
+  { key: 'topic', label: '话题树梳理' },
+  { key: 'root', label: '词根梳理' }
+]
+/** left：上一次跑完还剩多少没处理（失败的批次、中途停下的），按钮直接改成补跑这些 */
+const tidy = reactive<Record<TidyKind, { running: boolean; stop: boolean; msg: string; count: number; left: number }>>({
+  topic: { running: false, stop: false, msg: '', count: 0, left: 0 },
+  root: { running: false, stop: false, msg: '', count: 0, left: 0 }
+})
+const tidyBusy = computed(() => tidy.topic.running || tidy.root.running)
+function refreshTidyCounts() {
+  try { tidy.topic.count = topicPlanStats().topics } catch { tidy.topic.count = 0 }
+  try { tidy.root.count = rootMergeStats().merged } catch { tidy.root.count = 0 }
+}
+refreshTidyCounts()
+
+/**
+ * 话题树：模型先给每个话题设计两级目录，再把词逐批归进去，树按归类结果重建。
+ * 词根树：把全部词根交给模型，合并同源异形（spec / spect / spic）。
+ * 都是每批跑完就存，停下来下次接着跑没跑过的。
+ */
+async function runTidy(kind: TidyKind) {
+  const st = tidy[kind]
+  if (tidyBusy.value) return
+  st.running = true
+  st.stop = false
+  st.msg = '准备中…'
+  try {
+    const idx = await getIndex(wordStore.words)
+    const opts = {
+      shouldStop: () => st.stop,
+      onProgress: (p: { done: number; total: number; stage: string }) => {
+        st.msg = kind === 'topic' ? `${p.stage} · ${p.done} / ${p.total} 词` : `${p.done} / ${p.total} 个词根`
+        refreshTidyCounts()
+      }
+    }
+    let r
+    if (kind === 'topic') {
+      const topics = topicTree(idx, wordStore.words).flatMap(l1 => l1.children)
+        .map(l2 => ({ topic: topicOfNode(l2), words: l2.words }))
+      r = await tidyTopicTree(idx, topics, opts)
+    } else {
+      r = await tidyRoots(idx, opts)
+    }
+    refreshTidyCounts()
+    st.left = r.left
+    const unit = kind === 'topic' ? '词' : '个词根'
+    if (!r.total && !r.failedBatches) st.msg = kind === 'topic' ? '全部词都归好类了' : '全部词根都梳理过了'
+    else if (r.aborted) st.msg = `没跑通，已停下：${r.lastError || '未知原因'}`
+    else if (st.stop) st.msg = '已停下，下次接着跑'
+    else st.msg = (kind === 'topic' ? `归好 ${r.changed} / ${r.total} 词` : `合并了 ${r.changed} 个异形写法（看过 ${r.total} ${unit}）`) +
+      (r.failedBatches ? ` · ${r.failedBatches} 批失败：${r.lastError || ''}` : '')
+  } catch (e) {
+    st.msg = '出错：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    st.running = false
+  }
+}
+
+function clearTidy(kind: TidyKind) {
+  if (kind === 'topic') { clearTopicPlans(); clearLabelOverrides() }
+  else clearRootMerges()
+  refreshTidyCounts()
+  tidy[kind].msg = '已还原成本地算法的结果'
+}
+
+/**
+ * 笔记的几支荧光笔。
+ *
+ * 关系笔记四块各一支，二级词（派生、关系词）统一一支。
+ * 值写到 :root 的 CSS 变量上，NoteSheet 直接用；留空就是各自的默认色。
+ */
+const NOTE_PENS = [
+  { key: 'deriv', label: '派生', varName: '--note-hl-deriv' },
+  { key: 'root', label: '同根', varName: '--note-hl-root' },
+  { key: 'syn', label: '近义', varName: '--note-hl-syn' },
+  { key: 'ant', label: '反义', varName: '--note-hl-ant' },
+  { key: 'second', label: '二级', varName: '--note-hl2' }
+] as const
+const noteHl = ref<Record<string, string>>(readJson('lb-note-pens', {} as Record<string, string>))
+function applyNoteHl() {
+  const r = document.documentElement.style
+  for (const p of NOTE_PENS) {
+    const hex = noteHl.value[p.key]
+    hex ? r.setProperty(p.varName, `color-mix(in srgb, ${hex} 30%, transparent)`) : r.removeProperty(p.varName)
+  }
+}
+function setNotePen(key: string, hex: string) {
+  const next = { ...noteHl.value }
+  hex ? (next[key] = hex) : delete next[key]
+  noteHl.value = next
+  localStorage.setItem('lb-note-pens', JSON.stringify(next))
+  applyNoteHl()
+}
+applyNoteHl()
+
+const backingUp = ref(false)
+const busy = computed(() =>
+  deduping.value || enriching.value || aiRunning.value || aiProbing.value || backingUp.value
+)
 
 
 const health = computed<LibraryHealth>(() => checkLibraryHealth(wordStore.words))
@@ -1188,7 +1330,7 @@ const backupMsg = ref('')
 const backupWarn = ref(false)
 
 async function doBackup() {
-  busy.value = true
+  backingUp.value = true
   try {
     const data = await buildBackup()
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' })
@@ -1205,14 +1347,14 @@ async function doBackup() {
     backupWarn.value = true
     backupMsg.value = '导出失败：' + (e as Error).message
   } finally {
-    busy.value = false
+    backingUp.value = false
   }
 }
 
 async function onPickBackup(e: Event) {
   const f = (e.target as HTMLInputElement).files?.[0]
   if (!f) return
-  busy.value = true
+  backingUp.value = true
   try {
     const data = JSON.parse(await f.text())
     const r = await restoreBackup(data)
@@ -1226,7 +1368,7 @@ async function onPickBackup(e: Event) {
     backupWarn.value = true
     backupMsg.value = '恢复失败：' + (err as Error).message
   } finally {
-    busy.value = false
+    backingUp.value = false
     ;(e.target as HTMLInputElement).value = ''
   }
 }
@@ -1431,6 +1573,8 @@ onMounted(async () => {
 .file-btn { cursor: pointer; display: inline-flex; align-items: center; }
 .op-desc.warn { color: var(--c-danger); }
 .hl-picker { display: flex; gap: 7px; }
+.hl-rows { display: flex; flex-direction: column; gap: var(--space-2xs); }
+.hl-tag { min-width: 28px; color: var(--c-text-2); font-size: var(--text-xs); }
 .hl-dot {
   width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
   border: 1px solid rgba(0, 0, 0, .12);

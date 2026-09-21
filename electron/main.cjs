@@ -17,14 +17,23 @@ const { spawn } = require('node:child_process')
 const { existsSync, readFileSync } = require('node:fs')
 const { join } = require('node:path')
 
-const ROOT = join(__dirname, '..')
+/**
+ * 程序目录和数据目录要分开。
+ *
+ * 打包后 __dirname 在 resources/app 里（只读，portable 版还是临时解压出来的），
+ * 往那儿写 port.txt、data/、resources/ 要么失败要么下次就没了。
+ * 数据一律放 userData（%APPDATA%/LanguageBridge）。
+ */
+const ROOT = app.isPackaged ? join(process.resourcesPath, 'app') : join(__dirname, '..')
+const DATA_ROOT = app.isPackaged ? app.getPath('userData') : ROOT
 /** 每天几点之后提醒复习 */
 const REMIND_HOUR = 9
-const PORT_FILE = join(ROOT, 'port.txt')
+const PORT_FILE = join(DATA_ROOT, 'port.txt')
 
 let mainWin = null
 let ballWin = null
 let serverProc = null
+let lastServerError = ''
 
 /** 等 server.mjs 把端口写出来 */
 function waitForPort(timeoutMs = 60000) {
@@ -46,13 +55,30 @@ function waitForPort(timeoutMs = 60000) {
 
 function startServer() {
   // 用 Electron 自带的 Node 跑 server.mjs，用户机器上不用另外装 Node
-  serverProc = spawn(process.execPath, [join(ROOT, 'scripts', 'server.mjs')], {
-    cwd: ROOT,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LB_NO_OPEN_BROWSER: '1' },
+  const entry = join(ROOT, 'scripts', 'server.mjs')
+  if (!existsSync(entry)) {
+    // 打包漏了 scripts/，或者 asar 没关掉 —— 直接说清楚，别让窗口一直白着
+    lastServerError = `找不到服务入口：${entry}`
+    return
+  }
+  serverProc = spawn(process.execPath, [entry], {
+    cwd: DATA_ROOT,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      LB_NO_OPEN_BROWSER: '1',
+      LB_DATA_ROOT: DATA_ROOT,
+      LB_SEED_RESOURCES: app.isPackaged ? join(process.resourcesPath, 'resources') : '',
+      LB_PACKAGED: app.isPackaged ? '1' : '0'
+    },
     stdio: 'inherit'
   })
+  serverProc.on('error', err => { lastServerError = '服务启动失败：' + err.message })
   serverProc.on('exit', code => {
-    if (code && code !== 0) console.error('服务退出，退出码', code)
+    if (code && code !== 0) {
+      lastServerError = `服务退出，退出码 ${code}`
+      console.error(lastServerError)
+    }
   })
 }
 
@@ -255,7 +281,7 @@ app.whenReady().then(async () => {
     syncBall()
   } catch (e) {
     const { dialog } = require('electron')
-    dialog.showErrorBox('启动失败', e.message)
+    dialog.showErrorBox('启动失败', [e.message, lastServerError].filter(Boolean).join('\n'))
     app.quit()
   }
 })

@@ -110,3 +110,47 @@ export async function extractTextFromFile(file: File): Promise<string> {
 
 export const SUPPORTED_IMPORT_EXTS = '.txt,.csv,.json,.md,.docx,.pdf'
 export const SUPPORTED_ARTICLE_EXTS = '.txt,.md,.html,.docx,.pdf'
+
+/**
+ * 文件里的图片（作文题的图表、听力的地图），导成试题时挂到题目栏。
+ *
+ *  - docx：mammoth 转 HTML 时图片本来就内嵌成 data URL，直接收
+ *  - pdf：嵌入图片的原始数据格式五花八门，不去逐个解码；
+ *    哪一页画了图片，就把那一页整页渲染成一张图（最多 3 页）。
+ *    纯矢量画的图表（没有图片对象）认不出来，这种截图后 Ctrl+V 粘贴
+ * 太小的（图标、装饰线，小于 2KB）不要。
+ */
+export async function extractImagesFromFile(file: File, max = 6): Promise<string[]> {
+  const ext = file.name.split('.').pop()?.toLowerCase() || ''
+  try {
+    if (ext === 'docx') {
+      const mammoth = await import('mammoth')
+      const result = await withTimeout(mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() }), 30000, 'docx 图片提取')
+      const srcs = [...result.value.matchAll(/<img[^>]+src="(data:image\/[^"]+)"/g)].map(m => m[1])
+      return srcs.filter(s => s.length > 2700).slice(0, max)
+    }
+    if (ext === 'pdf') {
+      const pdfjsLib = await loadPdfjs()
+      const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise
+      const imageOps = new Set([pdfjsLib.OPS.paintImageXObject, pdfjsLib.OPS.paintInlineImageXObject, pdfjsLib.OPS.paintJpegXObject].filter(Boolean))
+      const out: string[] = []
+      for (let i = 1; i <= doc.numPages && out.length < Math.min(max, 3); i++) {
+        const page = await doc.getPage(i)
+        const ops = await page.getOperatorList()
+        if (!ops.fnArray.some((f: number) => imageOps.has(f))) continue
+        const viewport = page.getViewport({ scale: 1.5 })
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) continue
+        await page.render({ canvasContext: ctx, viewport } as any).promise
+        out.push(canvas.toDataURL('image/jpeg', 0.85))
+      }
+      return out
+    }
+  } catch (e) {
+    console.warn('[导入] 图片提取失败，只导文字：', e)
+  }
+  return []
+}

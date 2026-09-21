@@ -347,6 +347,7 @@
 </template>
 
 <script setup lang="ts">
+import { readJson } from '@/shared/core/safeStorage'
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getStudySettings } from '@/shared/core/studySettings'
@@ -418,7 +419,7 @@ function beep(freq: number, ms: number, gain = 0.05, type: OscillatorType = 'sin
 }
 function readDictSet(): typeof DICT_DEFAULTS {
   try {
-    const v = JSON.parse(localStorage.getItem('lb-dict-set') || '{}')
+    const v = readJson('lb-dict-set', {} as any)
     return { ...DICT_DEFAULTS, ...v }
   } catch {
     return { ...DICT_DEFAULTS }

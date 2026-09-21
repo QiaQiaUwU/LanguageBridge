@@ -194,7 +194,7 @@ export async function fetchTwDictList(): Promise<any[]> {
  *   sentences → example_sentences: { en, zh }[]
  *   phrases   → common_phrases:    { phrase_en, phrase_zh }[]
  *   synos.ws  → synonyms:          { word }[]
- *   relWords  → morphemes.root
+ *   relWords  → word_family（relWords.root 是领头词，不是词根）
  *   etymology → etymology: string
  *   phonetic0 → phonetic
  *
@@ -266,6 +266,9 @@ export function twToWordItem(tw: TwWord, source: string): any {
   }
 
   const wordFamily: string[] = []
+  // relWords.root 是这一族的领头词（abandonment → abandon），归词族，不是词根词缀
+  const head = String(tw.relWords.root || '').trim()
+  if (head && head.toLowerCase() !== tw.word.toLowerCase()) wordFamily.push(head)
   for (const r of tw.relWords.rels) {
     for (const w of r.words) if (w.c) wordFamily.push(w.c)
   }
@@ -287,6 +290,5 @@ export function twToWordItem(tw: TwWord, source: string): any {
     etymology: tw.etymology.length
       ? tw.etymology.map(e => (e.d ? `${e.t}：${e.d}` : e.t)).join('\n')
       : undefined,
-    morphemes: tw.relWords.root ? { root: { form: tw.relWords.root, meaning: '' } } : undefined
   }
 }

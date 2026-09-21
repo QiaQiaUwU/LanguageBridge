@@ -1,3 +1,4 @@
+import { realMorphemes, canonicalMorpheme } from './wordFamily'
 import type { WordItem } from '@/shared/types/WordItem'
 
 export type RelType = 'synonym' | 'antonym' | 'word_family' | 'morphology'
@@ -97,6 +98,8 @@ export function sourcesOf(w: WordItem): string[] {
 }
 
 export function morphemeKeyOf(w: WordItem): string {
-  const m = w.morphemes
-  return m?.root?.form || m?.prefix?.form || m?.suffix?.form || ''
+  const m = realMorphemes(w)
+  // 词根走归一键：梳理合并过的 spec / spect 算同一个团
+  if (m?.root?.form) return canonicalMorpheme(m.root.form, m.root.meaning, 'root') || m.root.form
+  return m?.prefix?.form || m?.suffix?.form || ''
 }

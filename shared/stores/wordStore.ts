@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { readJson } from '@/shared/core/safeStorage'
 import { ref, computed } from 'vue'
 import { wordDB } from '@/shared/core/database'
 import * as be from '@/shared/core/backendClient'
@@ -105,7 +106,7 @@ export const useWordStore = defineStore('word', () => {
 
   function readTombstones(): Record<string, number> {
     try {
-      const raw = JSON.parse(localStorage.getItem(TOMB_KEY) || '{}')
+      const raw = readJson(TOMB_KEY, {} as any)
       const now = Date.now()
       const alive: Record<string, number> = {}
       for (const [id, at] of Object.entries(raw)) {
@@ -760,9 +761,8 @@ export const useWordStore = defineStore('word', () => {
      */
     tombstone(toDelete)
     await be.beBulkSaveWords(toSave)
-    for (const id of toDelete) {
-      try { await be.beDeleteWord(id) } catch { /* 离线也没关系，墓碑挡着 */ }
-    }
+    // 一次删完：逐条删几千次，服务端每次重写整个词库文件，慢到实际跑不完
+    try { await be.beDeleteWords(toDelete) } catch { /* 离线也没关系，墓碑挡着 */ }
 
     await loadWords()
     return { merged, groupsFixed }

@@ -260,9 +260,10 @@ export function getStudySettings(): StudySettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     const saved = raw ? JSON.parse(raw) : null
-    cached = saved ? { ...DEFAULT_STUDY_SETTINGS, ...saved } : { ...DEFAULT_STUDY_SETTINGS }
-    cached.fontSize = { ...DEFAULT_STUDY_SETTINGS.fontSize, ...(saved?.fontSize || {}) }
-    cached.shortcutKeyMap = { ...DEFAULT_STUDY_SETTINGS.shortcutKeyMap, ...(saved?.shortcutKeyMap || {}) }
+    const next: StudySettings = saved ? { ...DEFAULT_STUDY_SETTINGS, ...saved } : { ...DEFAULT_STUDY_SETTINGS }
+    next.fontSize = { ...DEFAULT_STUDY_SETTINGS.fontSize, ...(saved?.fontSize || {}) }
+    next.shortcutKeyMap = { ...DEFAULT_STUDY_SETTINGS.shortcutKeyMap, ...(saved?.shortcutKeyMap || {}) }
+    cached = next
   } catch {
     cached = { ...DEFAULT_STUDY_SETTINGS }
   }

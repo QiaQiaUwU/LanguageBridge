@@ -88,14 +88,33 @@ async function ensureOrt() {
   return ortRT
 }
 
+/**
+ * 粗看一眼这份字节像不像 onnx。
+ *
+ * 挂梯子下载常常拿回来的是网页、登录页或者 git-lfs 的指针文本，
+ * 存下来照样是个 .onnx 文件，加载时才报 "protobuf parsing failed"，
+ * 而且坏文件一旦进了缓存，之后每次都直接用它，怎么重试都一样。
+ */
+function looksLikeOnnx(buf) {
+  if (!buf || buf.byteLength < 1024 * 1024) return false     // 正常模型几十上百 MB
+  const head = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buf, 0, 200))
+  if (/^\s*(<|\{|version https:\/\/git-lfs)/i.test(head)) return false  // 网页 / JSON / LFS 指针
+  return true
+}
+
 async function fetchModel(urls) {
   const cache = await caches.open(CACHE_NAME)
+  const bad = []
   for (const url of urls) {
     try {
       const hit = await cache.match(url)
       if (hit) {
         post('progress', { msg: '读取已下载的模型', ratio: 0.05 })
-        return await hit.arrayBuffer()
+        const cached = await hit.arrayBuffer()
+        if (looksLikeOnnx(cached)) return cached
+        // 缓存里那份是坏的，清掉重下
+        await cache.delete(url)
+        bad.push(url)
       }
       const res = await fetch(url)
       if (!res.ok) continue
@@ -114,15 +133,23 @@ async function fetchModel(urls) {
         const buf = new Uint8Array(got)
         let off = 0
         for (const c of chunks) { buf.set(c, off); off += c.length }
+        if (!looksLikeOnnx(buf.buffer)) { bad.push(url); continue }   // 坏文件不进缓存
         await cache.put(url, new Response(buf.slice(0)))
         return buf.buffer
       }
       const buf = await res.arrayBuffer()
+      if (!looksLikeOnnx(buf)) { bad.push(url); continue }
       await cache.put(url, new Response(buf.slice(0)))
       return buf
     } catch {
       /* 换下一个源 */
     }
+  }
+  if (bad.length) {
+    throw new Error(
+      `模型文件不对（${bad[bad.length - 1]}）：下到的多半是网页或 git-lfs 指针，不是真的 onnx。` +
+      '重新下载一份完整的放到 public/models/，坏的那份已经从缓存里清掉了'
+    )
   }
   throw new Error('所有模型源都下不动，检查网络或自己放一份到 public/models/')
 }

@@ -108,7 +108,13 @@
             <h4 class="block-title">词根词缀</h4>
             <div class="morpheme-row">
               <template v-for="(part, key) in morphemeParts" :key="key">
-                <span v-if="part" class="morpheme-part" :class="key">
+                <span
+                  v-if="part"
+                  class="morpheme-part"
+                  :class="[key, { clickable: true }]"
+                  title="看这个词根的笔记"
+                  @click="emit('open-morpheme', part.form)"
+                >
                   <span class="mp-form">{{ part.form }}</span>
                   <span v-if="part.meaning" class="mp-meaning">{{ part.meaning }}</span>
                   <span class="mp-kind">{{ key === 'prefix' ? '前缀' : key === 'root' ? '词根' : '后缀' }}</span>
@@ -296,6 +302,7 @@
 </template>
 
 <script setup lang="ts">
+import { realMorphemes } from '@/shared/core/wordFamily'
 import { ref, computed } from 'vue'
 import type { WordItem } from '@/shared/types/WordItem'
 import { playWord, playSentence, stopAll } from '@/shared/core/audio'
@@ -314,6 +321,8 @@ const emit = defineEmits<{
   memorize: [id: string]
   search: [word: string]
   'filter-family': [word: string]
+  /** 点拆词里的前缀 / 词根 / 后缀：去看这个词素的笔记 */
+  'open-morpheme': [form: string]
 }>()
 
 const tabs = [
@@ -412,9 +421,9 @@ function markAsMemorized() {
 }
 
 const morphemeParts = computed(() => ({
-  prefix: props.word.morphemes?.prefix,
-  root: props.word.morphemes?.root,
-  suffix: props.word.morphemes?.suffix
+  prefix: realMorphemes(props.word)?.prefix,
+  root: realMorphemes(props.word)?.root,
+  suffix: realMorphemes(props.word)?.suffix
 }))
 const hasMorphemes = computed(() =>
   !!(morphemeParts.value.prefix || morphemeParts.value.root || morphemeParts.value.suffix)
@@ -1086,6 +1095,8 @@ function formatDate(dateStr?: string): string {
 }
 
 .morpheme-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.morpheme-part.clickable { cursor: pointer; }
+.morpheme-part.clickable:hover { background: var(--c-surface-2); }
 .morpheme-part {
   display: flex;
   flex-direction: column;
